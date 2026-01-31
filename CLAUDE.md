@@ -22,18 +22,31 @@ go build -o kasa .
 
 ```
 kasa/
-├── main.go           # Entry point, agent setup, runner/session
-├── config.yaml       # Configuration and prompts
+├── main.go              # Entry point, agent setup, runner/session
+├── config.yaml          # Configuration and prompts
 ├── tools/
-│   ├── tools.go      # KubeTools struct, tool registration, addFunctionTool helper
-│   ├── namespaces.go # list_namespaces tool
-│   ├── pods.go       # list_pods tool
-│   └── references.go # get_reference tool (K8s resource docs)
+│   ├── tools.go         # KubeTools struct, tool registration, addFunctionTool helper
+│   ├── namespaces.go    # list_namespaces tool
+│   ├── pods.go          # list_pods tool
+│   ├── logs.go          # get_logs tool
+│   ├── events.go        # get_events tool
+│   ├── resource.go      # get_resource tool
+│   ├── references.go    # get_reference tool (K8s resource docs)
+│   ├── deploy.go        # create_deployment tool
+│   ├── service_create.go # create_service tool
+│   ├── health.go        # check_deployment_health tool
+│   ├── commit.go        # commit_manifests tool
+│   ├── manifest_list.go # list_manifests tool
+│   ├── manifest_read.go # read_manifest tool
+│   └── manifest_delete.go # delete_manifest tool
+├── manifest/
+│   └── manifest.go      # Manifest file storage and git operations
 ├── references/
-│   ├── references.go # Embedded documentation lookup
-│   └── data/*.md     # Reference docs for K8s resources
-├── .env              # API keys (gitignored)
-└── spec.md           # Full project specification
+│   ├── references.go    # Embedded documentation lookup
+│   └── data/*.md        # Reference docs for K8s resources
+├── deployments/         # Git-tracked manifest storage (created at runtime)
+├── .env                 # API keys (gitignored)
+└── spec.md              # Full project specification
 ```
 
 ## Key Patterns
@@ -106,10 +119,10 @@ func (t *MyTool) Run(ctx tool.Context, args any) (map[string]any, error) {
    ```go
    func (k *KubeTools) All() []tool.Tool {
        return []tool.Tool{
-           NewListNamespacesTool(k.clientset),
-           NewListPodsTool(k.clientset),
-           NewGetReferenceTool(),
-           NewMyTool(...),  // Add here
+           // ... existing tools ...
+           NewMyTool(k.clientset),           // K8s-only tool
+           NewMyTool(k.manifest),            // Manifest-only tool
+           NewMyTool(k.clientset, k.manifest), // Both
        }
    }
    ```
@@ -156,6 +169,30 @@ Embedded Kubernetes resource documentation in `references/data/*.md`. Access via
 references.List()                    // []string of available topics
 references.ListWithDescriptions()    // map[string]string with descriptions
 references.Lookup("deployment")      // Returns markdown content
+```
+
+### Manifest Package
+
+Handles manifest file storage with git integration. Files are stored as `<baseDir>/<namespace>/<app>/<type>.yaml`.
+
+```go
+manager, _ := manifest.NewManager("~/deployments")
+manager.EnsureGitInit()
+
+// Save and stage a manifest
+path, _ := manager.SaveManifest("default", "nginx", "deployment", yamlBytes)
+
+// List manifests (filter by namespace/app, empty = all)
+manifests, _ := manager.ListManifests("default", "")  // []ManifestInfo
+
+// Read manifest content
+content, _ := manager.ReadManifest("default", "nginx", "deployment")
+
+// Delete manifest(s) and stage deletion (empty type = delete all for app)
+deleted, _ := manager.DeleteManifest("default", "nginx", "deployment")
+
+// Commit staged changes
+manager.Commit("Deploy nginx to default namespace")
 ```
 
 ## Dependencies

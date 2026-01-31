@@ -28,6 +28,8 @@ func NewKubeTools(clientset *kubernetes.Clientset, manifest *manifest.Manager) *
 func (k *KubeTools) All() []tool.Tool {
 	return []tool.Tool{
 		NewListNamespacesTool(k.clientset),
+		NewCreateNamespaceTool(k.clientset),
+		NewDeleteNamespaceTool(k.clientset, k.manifest),
 		NewListPodsTool(k.clientset),
 		NewGetLogsTool(k.clientset),
 		NewGetEventsTool(k.clientset),
@@ -35,8 +37,18 @@ func (k *KubeTools) All() []tool.Tool {
 		NewGetReferenceTool(),
 		NewCreateDeploymentTool(k.clientset, k.manifest),
 		NewCreateServiceTool(k.clientset, k.manifest),
+		NewCreateConfigMapTool(k.clientset, k.manifest),
+		NewCreateSecretTool(k.clientset, k.manifest),
+		NewCreateIngressTool(k.clientset, k.manifest),
 		NewCheckDeploymentHealthTool(k.clientset),
 		NewCommitManifestsTool(k.manifest),
+		NewListManifestsTool(k.manifest),
+		NewReadManifestTool(k.manifest),
+		NewDeleteManifestTool(k.clientset, k.manifest),
+		NewDeleteResourceTool(k.clientset, k.manifest),
+		NewImportResourceTool(k.clientset, k.manifest),
+		NewApplyManifestTool(k.clientset, k.manifest),
+		NewDryRunApplyTool(k.clientset, k.manifest),
 	}
 }
 

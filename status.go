@@ -13,18 +13,20 @@ import (
 
 // StatusLine manages the status display at the bottom of the terminal.
 type StatusLine struct {
-	mu           sync.Mutex
-	state        string
-	toolName     string
-	inputTokens  int32
-	outputTokens int32
-	lastUpdate   time.Time
-	spinIdx      int
-	ticker       *time.Ticker
-	done         chan struct{}
-	termWidth    int
-	isTTY        bool
+	mu            sync.Mutex
+	state         string
+	toolName      string
+	inputTokens   int32
+	outputTokens  int32
+	toolStateTime time.Time // when we entered tool state
+	spinIdx       int
+	ticker        *time.Ticker
+	done          chan struct{}
+	termWidth     int
+	isTTY         bool
 }
+
+const minToolDisplayTime = 500 * time.Millisecond
 
 var spinChars = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
@@ -108,15 +110,18 @@ func (s *StatusLine) Update(event *session.Event) {
 			if part.FunctionCall != nil {
 				s.state = "tool"
 				s.toolName = part.FunctionCall.Name
+				s.toolStateTime = time.Now()
 				s.render()
 				return
 			}
 			if part.FunctionResponse != nil {
+				s.waitForToolDisplay()
 				s.state = "receiving"
 				s.render()
 				return
 			}
 			if part.Text != "" {
+				s.waitForToolDisplay()
 				if event.Partial {
 					s.state = "streaming"
 				} else {
@@ -127,6 +132,20 @@ func (s *StatusLine) Update(event *session.Event) {
 	}
 
 	s.render()
+}
+
+// waitForToolDisplay ensures tool state is visible for minimum time.
+// Must be called with mutex held.
+func (s *StatusLine) waitForToolDisplay() {
+	if s.state != "tool" {
+		return
+	}
+	elapsed := time.Since(s.toolStateTime)
+	if elapsed < minToolDisplayTime {
+		s.mu.Unlock()
+		time.Sleep(minToolDisplayTime - elapsed)
+		s.mu.Lock()
+	}
 }
 
 // ClearForOutput clears the status line before printing content.

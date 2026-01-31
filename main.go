@@ -126,13 +126,34 @@ func main() {
 		log.Fatalf("Failed to create agent: %v", err)
 	}
 
+	// Create session service and runner once (shared across all messages)
+	sessionService := session.InMemoryService()
+	r, err := runner.New(runner.Config{
+		AppName:        "kasa",
+		Agent:          agt,
+		SessionService: sessionService,
+	})
+	if err != nil {
+		log.Fatalf("Failed to create runner: %v", err)
+	}
+
+	// Create the session
+	_, err = sessionService.Create(ctx, &session.CreateRequest{
+		AppName:   "kasa",
+		UserID:    "user1",
+		SessionID: "session1",
+	})
+	if err != nil {
+		log.Fatalf("Failed to create session: %v", err)
+	}
+
 	// Non-interactive mode
 	if *prompt != "" {
 		if *debug {
 			fmt.Printf("Model: %s | Tools: %d | Deployments: %s\n", cfg.Agent.Model, len(kubeTools.All()), manifestMgr.BaseDir())
 			fmt.Printf("Prompt: %s\n\n", *prompt)
 		}
-		if err := runAgent(ctx, agt, *prompt, *debug); err != nil {
+		if err := runAgent(ctx, r, *prompt, *debug); err != nil {
 			log.Fatalf("Error: %v", err)
 		}
 		return
@@ -160,7 +181,7 @@ func main() {
 		}
 
 		// Send message and handle response
-		if err := runAgent(ctx, agt, input, *debug); err != nil {
+		if err := runAgent(ctx, r, input, *debug); err != nil {
 			fmt.Printf("Error: %v\n", err)
 		}
 	}
@@ -227,30 +248,9 @@ func setupMarkdownRenderer() (*glamour.TermRenderer, error) {
 }
 
 // runAgent runs the agent with the given prompt.
-func runAgent(ctx context.Context, agt agent.Agent, prompt string, debug bool) error {
+func runAgent(ctx context.Context, r *runner.Runner, prompt string, debug bool) error {
 	if debug {
 		fmt.Printf("[DEBUG] Sending message: %s\n", prompt)
-	}
-
-	// Create a runner with in-memory session
-	sessionService := session.InMemoryService()
-	r, err := runner.New(runner.Config{
-		AppName:        "kasa",
-		Agent:          agt,
-		SessionService: sessionService,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create runner: %w", err)
-	}
-
-	// Create the session
-	_, err = sessionService.Create(ctx, &session.CreateRequest{
-		AppName:   "kasa",
-		UserID:    "user1",
-		SessionID: "session1",
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create session: %w", err)
 	}
 
 	// Setup markdown renderer
