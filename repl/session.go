@@ -1,4 +1,4 @@
-package main
+package repl
 
 // ExecutionMode represents the current mode of the session.
 type ExecutionMode string
