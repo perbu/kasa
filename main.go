@@ -1,16 +1,17 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/glamour"
+	"github.com/chzyer/readline"
 	"github.com/joho/godotenv"
 	"github.com/perbu/kasa/manifest"
 	"github.com/perbu/kasa/tools"
@@ -159,7 +160,7 @@ func main() {
 	// Non-interactive mode (no approval workflow - runs directly)
 	if *prompt != "" {
 		if *debug {
-			fmt.Printf("Model: %s | Tools: %d | Deployments: %s\n", cfg.Agent.Model, len(kubeTools.All()), manifestMgr.BaseDir())
+			fmt.Printf("Model: %s | Tools: %d | Deployments folder: %s\n", cfg.Agent.Model, len(kubeTools.All()), manifestMgr.BaseDir())
 			fmt.Printf("Prompt: %s\n\n", *prompt)
 		}
 		// Non-interactive mode doesn't support plan approval, pass nil state
@@ -169,22 +170,48 @@ func main() {
 		return
 	}
 
-	// Interactive REPL mode
-	fmt.Printf("Kasa - Kubernetes Deployment Assistant (Safe Mode)\n")
-	fmt.Printf("Model: %s | Tools: %d | Deployments: %s\n", cfg.Agent.Model, len(kubeTools.All()), manifestMgr.BaseDir())
-	fmt.Printf("Type 'exit' or 'quit' to exit.\n\n")
+	// Interactive REPL mode - print fancy welcome
+	printWelcome(cfg.Agent.Model, len(kubeTools.All()), manifestMgr.BaseDir())
 
 	// Initialize session state for plan/approval workflow
 	state := NewSessionState()
 
-	scanner := bufio.NewScanner(os.Stdin)
+	// Set up readline with history
+	historyFile := ""
+	if home := homedir.HomeDir(); home != "" {
+		kasaDir := filepath.Join(home, ".kasa")
+		if err := os.MkdirAll(kasaDir, 0755); err == nil {
+			historyFile = filepath.Join(kasaDir, "history")
+		}
+	}
+
+	rl, err := readline.NewEx(&readline.Config{
+		Prompt:            "> ",
+		HistoryFile:       historyFile,
+		HistorySearchFold: true,
+		InterruptPrompt:   "^C",
+		EOFPrompt:         "exit",
+	})
+	if err != nil {
+		log.Fatalf("Failed to initialize readline: %v", err)
+	}
+	defer rl.Close()
+
 	for {
-		fmt.Print("> ")
-		if !scanner.Scan() {
+		line, err := rl.Readline()
+		if err != nil {
+			if err == readline.ErrInterrupt {
+				continue // Ctrl+C, just show new prompt
+			}
+			if err == io.EOF {
+				fmt.Println("Goodbye!")
+				break
+			}
+			fmt.Printf("Error reading input: %v\n", err)
 			break
 		}
 
-		input := strings.TrimSpace(scanner.Text())
+		input := strings.TrimSpace(line)
 		if input == "" {
 			continue
 		}
@@ -378,4 +405,40 @@ func runAgent(ctx context.Context, r *runner.Runner, state *SessionState, prompt
 	}
 
 	return nil
+}
+
+// printWelcome displays a fancy markdown-rendered welcome message.
+func printWelcome(model string, toolCount int, deploymentsDir string) {
+	welcome := fmt.Sprintf(`# Kasa
+
+**Kubernetes Deployment Assistant** _(Safe Mode)_
+
+| Setting | Value |
+|---------|-------|
+| Model | %s |
+| Tools | %d |
+| Deployments folder | %s |
+
+Commands: **yes**/**no** to approve/reject plans, **exit** to quit.
+`, model, toolCount, deploymentsDir)
+
+	renderer, err := setupMarkdownRenderer()
+	if err != nil {
+		// Fallback to plain text
+		fmt.Printf("Kasa - Kubernetes Deployment Assistant (Safe Mode)\n")
+		fmt.Printf("Model: %s | Tools: %d | Deployments: %s\n", model, toolCount, deploymentsDir)
+		fmt.Printf("Type 'exit' or 'quit' to exit.\n\n")
+		return
+	}
+
+	rendered, err := renderer.Render(welcome)
+	if err != nil {
+		// Fallback to plain text
+		fmt.Printf("Kasa - Kubernetes Deployment Assistant (Safe Mode)\n")
+		fmt.Printf("Model: %s | Tools: %d | Deployments: %s\n", model, toolCount, deploymentsDir)
+		fmt.Printf("Type 'exit' or 'quit' to exit.\n\n")
+		return
+	}
+
+	fmt.Print(rendered)
 }
