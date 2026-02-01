@@ -92,6 +92,7 @@ func (k *KubeTools) All() []tool.Tool {
 		NewListResourcesTool(k.dynamicClient),
 		// Utility tools
 		NewSleepTool(),
+		NewWaitForConditionTool(k.clientset, k.dynamicClient),
 		// Web tools
 		NewFetchUrlTool(k.jinaAPIKey),
 	}
