@@ -24,6 +24,11 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 
+	// Auto-detect envtest binaries if KUBEBUILDER_ASSETS not set
+	if path := detectEnvtestAssets(); path != "" {
+		println("Using envtest assets from:", path)
+	}
+
 	testEnv = &envtest.Environment{}
 
 	cfg, err := testEnv.Start()
@@ -31,7 +36,7 @@ func TestMain(m *testing.M) {
 		// If envtest fails to start, print helpful message and exit
 		println("Failed to start envtest environment:", err.Error())
 		println("To install envtest binaries, run:")
-		println("  go run sigs.k8s.io/controller-runtime/tools/setup-envtest@latest use --bin-dir /usr/local/kubebuilder/bin")
+		println("  go tool setup-envtest use")
 		println("Or set SKIP_ENVTEST=1 to skip these tests")
 		os.Exit(1)
 	}
@@ -1361,6 +1366,7 @@ func TestKubeToolsAll(t *testing.T) {
 		"apply_resource",
 		"list_resources",
 		"sleep",
+		"wait_for_condition",
 		"fetch_url",
 	}
 

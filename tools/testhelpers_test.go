@@ -252,26 +252,61 @@ func writeTestManifest(t *testing.T, mgr *manifest.Manager, namespace, app, reso
 	}
 }
 
-// skipIfNoEnvtest skips the test if envtest binaries are not available.
-func skipIfNoEnvtest(t *testing.T) {
-	t.Helper()
-
-	// Check for KUBEBUILDER_ASSETS environment variable
-	if os.Getenv("KUBEBUILDER_ASSETS") != "" {
-		return
+// detectEnvtestAssets finds envtest binaries and sets KUBEBUILDER_ASSETS if not already set.
+// Returns the path to the assets directory, or empty string if not found.
+func detectEnvtestAssets() string {
+	// If already set, use that
+	if path := os.Getenv("KUBEBUILDER_ASSETS"); path != "" {
+		return path
 	}
 
-	// Check common locations
-	paths := []string{
+	// Common locations for setup-envtest installed binaries
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	// setup-envtest default locations by OS
+	searchDirs := []string{
+		// macOS
+		homeDir + "/Library/Application Support/io.kubebuilder.envtest/k8s",
+		// Linux
+		homeDir + "/.local/share/io.kubebuilder.envtest/k8s",
+		// Legacy locations
 		"/usr/local/kubebuilder/bin",
-		os.ExpandEnv("$HOME/.local/share/kubebuilder-envtest"),
+		homeDir + "/.local/share/kubebuilder-envtest",
 	}
 
-	for _, p := range paths {
-		if _, err := os.Stat(p); err == nil {
-			return
+	for _, dir := range searchDirs {
+		// Check if it's a direct bin directory (legacy)
+		if _, err := os.Stat(dir + "/kube-apiserver"); err == nil {
+			os.Setenv("KUBEBUILDER_ASSETS", dir)
+			return dir
+		}
+
+		// Check for versioned subdirectories (setup-envtest style)
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+
+		// Find the latest version directory
+		var latestDir string
+		for _, entry := range entries {
+			if entry.IsDir() {
+				candidate := dir + "/" + entry.Name()
+				// Verify it has the required binaries
+				if _, err := os.Stat(candidate + "/kube-apiserver"); err == nil {
+					latestDir = candidate
+				}
+			}
+		}
+
+		if latestDir != "" {
+			os.Setenv("KUBEBUILDER_ASSETS", latestDir)
+			return latestDir
 		}
 	}
 
-	t.Skip("envtest binaries not found; set KUBEBUILDER_ASSETS or run: go run sigs.k8s.io/controller-runtime/tools/setup-envtest@latest use --bin-dir /usr/local/kubebuilder/bin")
+	return ""
 }
