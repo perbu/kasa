@@ -86,11 +86,12 @@ func main() {
 		log.Fatalf("Failed to initialize git in manifest directory: %v", err)
 	}
 
-	// Get Jina Reader API key (optional)
+	// Get API keys for web tools (optional)
 	jinaAPIKey := os.Getenv("JINA_READER_API_KEY")
+	tavilyAPIKey := os.Getenv("TAVILY_API_KEY")
 
 	// Initialize tools
-	kubeTools := tools.NewKubeTools(clientset, dynamicClient, manifestMgr, jinaAPIKey)
+	kubeTools := tools.NewKubeTools(clientset, dynamicClient, manifestMgr, jinaAPIKey, tavilyAPIKey)
 
 	// Get API key from environment
 	apiKey := os.Getenv("GOOGLE_API_KEY")
@@ -117,11 +118,15 @@ func main() {
 		fmt.Println("[DEBUG] Running without tools")
 	}
 
+	// Generate dynamic tool documentation and inject into system prompt
+	toolDocs := kubeTools.GenerateToolDocs()
+	systemPrompt := strings.Replace(cfg.Prompts.System, "{{TOOL_DOCS}}", toolDocs, 1)
+
 	agentConfig := llmagent.Config{
 		Name:        cfg.Agent.Name,
 		Description: "Kubernetes deployment assistant",
 		Model:       geminiModel,
-		Instruction: cfg.Prompts.System,
+		Instruction: systemPrompt,
 		Tools:       agentTools,
 	}
 

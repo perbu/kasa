@@ -48,6 +48,11 @@ func (t *CreateDeploymentTool) IsLongRunning() bool {
 	return false
 }
 
+// Category returns the tool category.
+func (t *CreateDeploymentTool) Category() ToolCategory {
+	return CategoryMutating
+}
+
 // ProcessRequest adds this tool to the LLM request.
 func (t *CreateDeploymentTool) ProcessRequest(ctx tool.Context, req *model.LLMRequest) error {
 	return addFunctionTool(req, t)

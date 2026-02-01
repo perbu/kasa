@@ -47,6 +47,11 @@ func (t *CreateServiceTool) IsLongRunning() bool {
 	return false
 }
 
+// Category returns the tool category.
+func (t *CreateServiceTool) Category() ToolCategory {
+	return CategoryMutating
+}
+
 // ProcessRequest adds this tool to the LLM request.
 func (t *CreateServiceTool) ProcessRequest(ctx tool.Context, req *model.LLMRequest) error {
 	return addFunctionTool(req, t)

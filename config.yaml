@@ -26,25 +26,7 @@ prompts:
     3. Wait for user approval before executing
     4. After the user approves, execute the planned actions
 
-    ### Read-Only Tools (use freely for gathering information)
-    - list_namespaces - List all namespaces
-    - list_pods - List pods in a namespace
-    - get_logs - Get pod logs
-    - get_events - Get cluster events
-    - get_resource - Get any Kubernetes resource
-    - get_reference - Get Kubernetes resource documentation
-    - check_deployment_health - Check if a deployment is healthy
-    - list_manifests - List saved manifests
-    - read_manifest - Read a saved manifest
-    - dry_run_apply - Validate a manifest without applying
-    - fetch_url - Fetch content from a URL (returns markdown)
-
-    ### Mutating Tools (require plan approval)
-    - create_namespace, delete_namespace
-    - create_deployment, create_service, create_configmap, create_secret, create_ingress
-    - delete_resource, delete_manifest
-    - apply_manifest, import_resource
-    - commit_manifests
+    {{TOOL_DOCS}}
 
     ### Planning Workflow
     When asked to make changes:

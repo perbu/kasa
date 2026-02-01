@@ -31,6 +31,11 @@ func (t *ProposePlanTool) IsLongRunning() bool {
 	return false
 }
 
+// Category returns the tool category.
+func (t *ProposePlanTool) Category() ToolCategory {
+	return CategoryPlanning
+}
+
 // ProcessRequest adds this tool to the LLM request.
 func (t *ProposePlanTool) ProcessRequest(ctx tool.Context, req *model.LLMRequest) error {
 	return addFunctionTool(req, t)

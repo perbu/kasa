@@ -37,6 +37,11 @@ func (t *CommitManifestsTool) IsLongRunning() bool {
 	return false
 }
 
+// Category returns the tool category.
+func (t *CommitManifestsTool) Category() ToolCategory {
+	return CategoryMutating
+}
+
 // ProcessRequest adds this tool to the LLM request.
 func (t *CommitManifestsTool) ProcessRequest(ctx tool.Context, req *model.LLMRequest) error {
 	return addFunctionTool(req, t)

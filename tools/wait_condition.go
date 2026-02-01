@@ -55,6 +55,11 @@ func (t *WaitForConditionTool) IsLongRunning() bool {
 	return true
 }
 
+// Category returns the tool category.
+func (t *WaitForConditionTool) Category() ToolCategory {
+	return CategoryReadOnly
+}
+
 // ProcessRequest adds this tool to the LLM request.
 func (t *WaitForConditionTool) ProcessRequest(ctx tool.Context, req *model.LLMRequest) error {
 	return addFunctionTool(req, t)

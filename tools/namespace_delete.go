@@ -44,6 +44,11 @@ func (t *DeleteNamespaceTool) IsLongRunning() bool {
 	return false
 }
 
+// Category returns the tool category.
+func (t *DeleteNamespaceTool) Category() ToolCategory {
+	return CategoryMutating
+}
+
 // ProcessRequest adds this tool to the LLM request.
 func (t *DeleteNamespaceTool) ProcessRequest(ctx tool.Context, req *model.LLMRequest) error {
 	return addFunctionTool(req, t)

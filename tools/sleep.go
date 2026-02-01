@@ -31,6 +31,11 @@ func (t *SleepTool) IsLongRunning() bool {
 	return false
 }
 
+// Category returns the tool category.
+func (t *SleepTool) Category() ToolCategory {
+	return CategoryReadOnly
+}
+
 // ProcessRequest adds this tool to the LLM request.
 func (t *SleepTool) ProcessRequest(ctx tool.Context, req *model.LLMRequest) error {
 	return addFunctionTool(req, t)

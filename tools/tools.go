@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/perbu/kasa/manifest"
 	"google.golang.org/adk/model"
@@ -19,28 +20,16 @@ const (
 	CategoryReadOnly ToolCategory = "read-only"
 	// CategoryMutating indicates tools that modify cluster or manifest state.
 	CategoryMutating ToolCategory = "mutating"
+	// CategoryPlanning indicates tools used for planning workflows.
+	CategoryPlanning ToolCategory = "planning"
 )
 
-// mutatingToolNames is a set of tool names that are classified as mutating.
-var mutatingToolNames = map[string]bool{
-	"create_namespace":    true,
-	"delete_namespace":    true,
-	"create_deployment":   true,
-	"create_service":      true,
-	"create_configmap":    true,
-	"create_secret":       true,
-	"create_ingress":      true,
-	"delete_resource":     true,
-	"delete_manifest":     true,
-	"apply_manifest":      true,
-	"apply_resource":      true,
-	"import_resource":     true,
-	"commit_manifests":    true,
-}
-
-// IsMutating returns true if the given tool name is classified as mutating.
-func IsMutating(toolName string) bool {
-	return mutatingToolNames[toolName]
+// IsMutating returns true if the given tool is classified as mutating.
+func IsMutating(t tool.Tool) bool {
+	if ft, ok := t.(functionTool); ok {
+		return ft.Category() == CategoryMutating
+	}
+	return false
 }
 
 // KubeTools holds the Kubernetes clientset and provides tool definitions.
@@ -49,15 +38,17 @@ type KubeTools struct {
 	dynamicClient dynamic.Interface
 	manifest      *manifest.Manager
 	jinaAPIKey    string
+	tavilyAPIKey  string
 }
 
-// NewKubeTools creates a new KubeTools instance with the given clientset, dynamic client, manifest manager, and Jina API key.
-func NewKubeTools(clientset *kubernetes.Clientset, dynamicClient dynamic.Interface, manifest *manifest.Manager, jinaAPIKey string) *KubeTools {
+// NewKubeTools creates a new KubeTools instance with the given clientset, dynamic client, manifest manager, and API keys.
+func NewKubeTools(clientset *kubernetes.Clientset, dynamicClient dynamic.Interface, manifest *manifest.Manager, jinaAPIKey, tavilyAPIKey string) *KubeTools {
 	return &KubeTools{
 		clientset:     clientset,
 		dynamicClient: dynamicClient,
 		manifest:      manifest,
 		jinaAPIKey:    jinaAPIKey,
+		tavilyAPIKey:  tavilyAPIKey,
 	}
 }
 
@@ -95,6 +86,7 @@ func (k *KubeTools) All() []tool.Tool {
 		NewWaitForConditionTool(k.clientset, k.dynamicClient),
 		// Web tools
 		NewFetchUrlTool(k.jinaAPIKey),
+		NewSearchWebTool(k.tavilyAPIKey),
 	}
 }
 
@@ -103,7 +95,7 @@ func (k *KubeTools) ReadOnlyTools() []tool.Tool {
 	all := k.All()
 	result := make([]tool.Tool, 0, len(all))
 	for _, t := range all {
-		if !IsMutating(t.Name()) {
+		if ft, ok := t.(functionTool); ok && ft.Category() == CategoryReadOnly {
 			result = append(result, t)
 		}
 	}
@@ -115,17 +107,52 @@ func (k *KubeTools) MutatingTools() []tool.Tool {
 	all := k.All()
 	result := make([]tool.Tool, 0, len(all))
 	for _, t := range all {
-		if IsMutating(t.Name()) {
+		if ft, ok := t.(functionTool); ok && ft.Category() == CategoryMutating {
 			result = append(result, t)
 		}
 	}
 	return result
 }
 
-// functionTool is an interface for tools that provide function declarations
+// GenerateToolDocs generates markdown documentation for all tools organized by category.
+func (k *KubeTools) GenerateToolDocs() string {
+	var readOnly, mutating, planning []string
+
+	for _, t := range k.All() {
+		ft, ok := t.(functionTool)
+		if !ok {
+			continue
+		}
+		line := fmt.Sprintf("- %s - %s", ft.Name(), ft.Description())
+
+		switch ft.Category() {
+		case CategoryReadOnly:
+			readOnly = append(readOnly, line)
+		case CategoryMutating:
+			mutating = append(mutating, line)
+		case CategoryPlanning:
+			planning = append(planning, line)
+		}
+	}
+
+	return fmt.Sprintf(`### Read-Only Tools (use freely for gathering information)
+%s
+
+### Mutating Tools (require plan approval)
+%s
+
+### Planning Tools
+%s`,
+		strings.Join(readOnly, "\n"),
+		strings.Join(mutating, "\n"),
+		strings.Join(planning, "\n"))
+}
+
+// functionTool is an interface for tools that provide function declarations and categories.
 type functionTool interface {
 	tool.Tool
 	Declaration() *genai.FunctionDeclaration
+	Category() ToolCategory
 }
 
 // addFunctionTool adds a function tool to the LLM request

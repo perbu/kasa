@@ -37,6 +37,11 @@ func (t *ReadManifestTool) IsLongRunning() bool {
 	return false
 }
 
+// Category returns the tool category.
+func (t *ReadManifestTool) Category() ToolCategory {
+	return CategoryReadOnly
+}
+
 // ProcessRequest adds this tool to the LLM request.
 func (t *ReadManifestTool) ProcessRequest(ctx tool.Context, req *model.LLMRequest) error {
 	return addFunctionTool(req, t)

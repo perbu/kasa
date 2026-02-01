@@ -46,6 +46,11 @@ func (t *CreateSecretTool) IsLongRunning() bool {
 	return false
 }
 
+// Category returns the tool category.
+func (t *CreateSecretTool) Category() ToolCategory {
+	return CategoryMutating
+}
+
 // ProcessRequest adds this tool to the LLM request.
 func (t *CreateSecretTool) ProcessRequest(ctx tool.Context, req *model.LLMRequest) error {
 	return addFunctionTool(req, t)

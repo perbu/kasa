@@ -45,6 +45,11 @@ func (t *ApplyResourceTool) IsLongRunning() bool {
 	return false
 }
 
+// Category returns the tool category.
+func (t *ApplyResourceTool) Category() ToolCategory {
+	return CategoryMutating
+}
+
 // ProcessRequest adds this tool to the LLM request.
 func (t *ApplyResourceTool) ProcessRequest(ctx tool.Context, req *model.LLMRequest) error {
 	return addFunctionTool(req, t)

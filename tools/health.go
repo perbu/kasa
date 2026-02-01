@@ -56,6 +56,11 @@ func (t *CheckDeploymentHealthTool) IsLongRunning() bool {
 	return false
 }
 
+// Category returns the tool category.
+func (t *CheckDeploymentHealthTool) Category() ToolCategory {
+	return CategoryReadOnly
+}
+
 // ProcessRequest adds this tool to the LLM request.
 func (t *CheckDeploymentHealthTool) ProcessRequest(ctx tool.Context, req *model.LLMRequest) error {
 	return addFunctionTool(req, t)
