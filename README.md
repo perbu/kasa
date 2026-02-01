@@ -1,6 +1,7 @@
 # Kasa
 
-Kasa is a conversational Kubernetes deployment assistant. It uses Google's ADK (Agent Development Kit) with Gemini and client-go for Kubernetes interaction.
+Kasa is a conversational Kubernetes deployment assistant. It uses Google's ADK (Agent Development Kit) with Gemini and
+client-go for Kubernetes interaction.
 
 ## Features
 
@@ -17,10 +18,13 @@ go build -o kasa .
 
 ## Configuration
 
-Create a `.env` file with your API key:
+Create a `.env` file with your API keys. You need a Google API key for Google Cloud
+Gemini Access, a Jina key for web to markdown API and a Tavily API key for search.
 
 ```
 GOOGLE_API_KEY=your-key-here
+JINA_READER_API_KEY=your-key-here
+TAVILY_API_KEY=your-key-here
 ```
 
 Edit `config.yaml` for Kubernetes settings and model selection.
@@ -35,7 +39,8 @@ Edit `config.yaml` for Kubernetes settings and model selection.
 
 ## Safe Mode
 
-In interactive mode, mutating operations require approval. The agent proposes a plan, you review it, then approve with `yes` or reject with `no`.
+In interactive mode, mutating operations require approval. The agent proposes a plan, you review it, then approve with
+`yes` or reject with `no`.
 
 ## License
 

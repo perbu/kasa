@@ -4,65 +4,33 @@
 
 Kasa is a conversational Kubernetes deployment assistant built with Go, using Google's ADK (Agent Development Kit) for LLM agent capabilities and client-go for Kubernetes interaction.
 
-## Build & Run
+## Verify build
 
 ```bash
-go build -o kasa .
-./kasa                           # Interactive REPL mode
-./kasa -prompt "list namespaces" # Single prompt mode
-./kasa -debug -prompt "..."      # With debug output
+go build -o /dev/null
+```
+
+## Run non-interactively:
+```
+go run . -prompt "list namespaces" # Single prompt mode
+go run . -debug -prompt "..."      # With debug output
 ```
 
 ## Configuration
 
-- `.env` - Contains `GOOGLE_API_KEY` (not committed)
+- `.env` - Contains api keys
 - `config.yaml` - Kubernetes settings, model selection, and system prompt
 
 ## Project Structure
 
 ```
 kasa/
-├── main.go              # Entry point, agent setup, runner/session, REPL with approval flow
-├── config.yaml          # Configuration and prompts
-├── session_state.go     # SessionState, Plan, PlannedAction types for approval workflow
-├── plan_display.go      # Plan display and parsing utilities
-├── status.go            # Terminal status line display
-├── tools/
-│   ├── tools.go         # KubeTools struct, tool categories, registration
-│   ├── gvr.go           # GVR helpers, CommonGVRs map, kind aliases for dynamic client
-│   ├── propose_plan.go  # propose_plan tool for safe mode approval workflow
-│   ├── namespaces.go    # list_namespaces tool
-│   ├── namespace_create.go # create_namespace tool
-│   ├── namespace_delete.go # delete_namespace tool
-│   ├── pods.go          # list_pods tool
-│   ├── logs.go          # get_logs tool
-│   ├── events.go        # get_events tool
-│   ├── resource.go      # get_resource tool (with dynamic client fallback)
-│   ├── resource_delete.go # delete_resource tool (with dynamic client support)
-│   ├── references.go    # get_reference tool (K8s resource docs)
-│   ├── deploy.go        # create_deployment tool
-│   ├── service_create.go # create_service tool
-│   ├── configmap_create.go # create_configmap tool
-│   ├── secret_create.go # create_secret tool
-│   ├── ingress_create.go # create_ingress tool
-│   ├── health.go        # check_deployment_health tool
-│   ├── commit.go        # commit_manifests tool
-│   ├── manifest_list.go # list_manifests tool
-│   ├── manifest_read.go # read_manifest tool
-│   ├── manifest_delete.go # delete_manifest tool
-│   ├── apply.go         # apply_manifest tool
-│   ├── apply_resource.go # apply_resource tool (generic, any YAML)
-│   ├── list_resources.go # list_resources tool (generic, any kind)
-│   ├── import.go        # import_resource tool (with dynamic client support)
-│   └── dryrun.go        # dry_run_apply tool
-├── manifest/
-│   └── manifest.go      # Manifest file storage and git operations
-├── references/
-│   ├── references.go    # Embedded documentation lookup
-│   └── data/*.md        # Reference docs for K8s resources
-├── deployments/         # Git-tracked manifest storage (created at runtime)
-├── .env                 # API keys (gitignored)
-└── spec.md              # Full project specification
+├── main.go, repl.go     # Entry point, agent setup, REPL with approval flow
+├── session_state.go     # Plan/approval workflow state types
+├── tools/               # All K8s tools (one file per tool, see tools.go for registry)
+├── manifest/            # Manifest file storage with git integration
+├── references/          # Embedded K8s resource documentation
+└── deployments/         # Git-tracked manifest storage (created at runtime)
 ```
 
 ## Safe Mode (Plan/Approval Workflow)
