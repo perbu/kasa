@@ -25,9 +25,9 @@ go run . -debug -prompt "..."      # With debug output
 
 ```
 kasa/
-├── main.go, repl.go     # Entry point, agent setup, REPL with approval flow
-├── session_state.go     # Plan/approval workflow state types
+├── main.go              # Entry point, agent setup
 ├── tools/               # All K8s tools (one file per tool, see tools.go for registry)
+├── repl/                # Interactive REPL with plan/approval workflow
 ├── manifest/            # Manifest file storage with git integration
 ├── references/          # Embedded K8s resource documentation
 └── deployments/         # Git-tracked manifest storage (created at runtime)
