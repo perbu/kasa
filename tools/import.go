@@ -12,21 +12,24 @@ import (
 	"google.golang.org/adk/tool"
 	"google.golang.org/genai"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/yaml"
 )
 
 // ImportResourceTool provides the import_resource tool for the agent.
 type ImportResourceTool struct {
-	clientset *kubernetes.Clientset
-	manifest  *manifest.Manager
+	clientset     *kubernetes.Clientset
+	dynamicClient dynamic.Interface
+	manifest      *manifest.Manager
 }
 
 // NewImportResourceTool creates a new ImportResourceTool.
-func NewImportResourceTool(clientset *kubernetes.Clientset, manifest *manifest.Manager) *ImportResourceTool {
+func NewImportResourceTool(clientset *kubernetes.Clientset, dynamicClient dynamic.Interface, manifest *manifest.Manager) *ImportResourceTool {
 	return &ImportResourceTool{
-		clientset: clientset,
-		manifest:  manifest,
+		clientset:     clientset,
+		dynamicClient: dynamicClient,
+		manifest:      manifest,
 	}
 }
 
@@ -68,7 +71,11 @@ func (t *ImportResourceTool) Declaration() *genai.FunctionDeclaration {
 				},
 				"kind": {
 					Type:        "string",
-					Description: "The resource type: deployment, service, configmap, secret, ingress (aliases: deploy, svc, cm)",
+					Description: "The resource type. Core: deployment, service, configmap, secret, ingress (aliases: deploy, svc, cm). Also supports CRDs: httproute, gateway, certificate, etc.",
+				},
+				"api_version": {
+					Type:        "string",
+					Description: "API version for CRDs (e.g., 'gateway.networking.k8s.io/v1'). Only needed for unknown resource types.",
 				},
 				"overwrite": {
 					Type:        "boolean",
@@ -109,17 +116,31 @@ func (t *ImportResourceTool) Run(ctx tool.Context, args any) (map[string]any, er
 		return map[string]any{"error": "kind is required"}, nil
 	}
 
+	apiVersion := ""
+	if av, ok := argsMap["api_version"].(string); ok {
+		apiVersion = av
+	}
+
 	overwrite := false
 	if ow, ok := argsMap["overwrite"].(bool); ok {
 		overwrite = ow
 	}
 
-	// Normalize kind
+	// Normalize kind - first check if it's a known core type
 	resourceType := normalizeKind(kind)
+	useDynamic := false
+
 	if resourceType == "" {
-		return map[string]any{
-			"error": fmt.Sprintf("unsupported resource kind: %s. Supported: deployment, service, configmap, secret, ingress", kind),
-		}, nil
+		// Check if it's a known CRD kind from our GVR table
+		normalized := NormalizeKindName(kind)
+		if _, found := LookupGVR(normalized); found || apiVersion != "" {
+			resourceType = normalized
+			useDynamic = true
+		} else {
+			return map[string]any{
+				"error": fmt.Sprintf("unsupported resource kind: %s. Provide api_version for custom resources.", kind),
+			}, nil
+		}
 	}
 
 	// Check if manifest already exists
@@ -135,7 +156,14 @@ func (t *ImportResourceTool) Run(ctx tool.Context, args any) (map[string]any, er
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	resourceMap, err := t.fetchResource(timeoutCtx, namespace, name, resourceType)
+	var resourceMap map[string]any
+	var err error
+
+	if useDynamic {
+		resourceMap, err = t.fetchDynamicResource(timeoutCtx, namespace, name, resourceType, apiVersion)
+	} else {
+		resourceMap, err = t.fetchResource(timeoutCtx, namespace, name, resourceType)
+	}
 	if err != nil {
 		return map[string]any{"error": err.Error()}, nil
 	}
@@ -216,4 +244,35 @@ func (t *ImportResourceTool) fetchResource(ctx context.Context, namespace, name,
 
 	// Convert to map via JSON
 	return toMap(obj)
+}
+
+// fetchDynamicResource fetches any resource using the dynamic client.
+func (t *ImportResourceTool) fetchDynamicResource(ctx context.Context, namespace, name, kind, apiVersion string) (map[string]any, error) {
+	if t.dynamicClient == nil {
+		return nil, fmt.Errorf("dynamic client not available")
+	}
+
+	// Build GVR from kind and api_version
+	gvr, found := BuildGVRFromKindAndAPIVersion(kind, apiVersion)
+	if !found && apiVersion == "" {
+		return nil, fmt.Errorf("unknown resource kind '%s'. Provide api_version for custom resources", kind)
+	}
+
+	// Check if resource is namespaced
+	namespaced := IsNamespaced(kind)
+
+	// Get the resource interface
+	var resourceClient dynamic.ResourceInterface
+	if namespaced {
+		resourceClient = t.dynamicClient.Resource(gvr).Namespace(namespace)
+	} else {
+		resourceClient = t.dynamicClient.Resource(gvr)
+	}
+
+	obj, err := resourceClient.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch %s/%s: %v", kind, name, err)
+	}
+
+	return obj.Object, nil
 }

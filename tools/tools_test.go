@@ -7,13 +7,15 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 )
 
 var (
-	testEnv   *envtest.Environment
-	clientset *kubernetes.Clientset
+	testEnv       *envtest.Environment
+	clientset     *kubernetes.Clientset
+	dynamicClient dynamic.Interface
 )
 
 func TestMain(m *testing.M) {
@@ -37,6 +39,13 @@ func TestMain(m *testing.M) {
 	clientset, err = kubernetes.NewForConfig(cfg)
 	if err != nil {
 		println("Failed to create clientset:", err.Error())
+		testEnv.Stop()
+		os.Exit(1)
+	}
+
+	dynamicClient, err = dynamic.NewForConfig(cfg)
+	if err != nil {
+		println("Failed to create dynamic client:", err.Error())
 		testEnv.Stop()
 		os.Exit(1)
 	}
@@ -172,7 +181,7 @@ func TestListPodsTool(t *testing.T) {
 
 // TestGetResourceTool tests the get_resource tool.
 func TestGetResourceTool(t *testing.T) {
-	tool := NewGetResourceTool(clientset)
+	tool := NewGetResourceTool(clientset, dynamicClient)
 
 	nsName := "test-get-resource"
 	createTestNamespace(t, clientset, nsName)
@@ -816,7 +825,7 @@ func TestImportResourceTool(t *testing.T) {
 	createTestNamespace(t, clientset, nsName)
 	mgr := newTestManifestManager(t)
 
-	tool := NewImportResourceTool(clientset, mgr)
+	tool := NewImportResourceTool(clientset, dynamicClient, mgr)
 
 	t.Run("imports deployment", func(t *testing.T) {
 		createTestDeployment(t, clientset, nsName, "existing-deploy")
@@ -1045,7 +1054,7 @@ func TestDeleteResourceTool(t *testing.T) {
 	createTestNamespace(t, clientset, nsName)
 	mgr := newTestManifestManager(t)
 
-	tool := NewDeleteResourceTool(clientset, mgr)
+	tool := NewDeleteResourceTool(clientset, dynamicClient, mgr)
 
 	t.Run("deletes deployment from cluster", func(t *testing.T) {
 		// Create deployment directly (not using helper to avoid cleanup conflict)
@@ -1321,7 +1330,7 @@ func TestGetLogsTool(t *testing.T) {
 // TestKubeToolsAll tests that All() returns all expected tools.
 func TestKubeToolsAll(t *testing.T) {
 	mgr := newTestManifestManager(t)
-	kt := NewKubeTools(clientset, mgr)
+	kt := NewKubeTools(clientset, dynamicClient, mgr, "")
 
 	tools := kt.All()
 
@@ -1348,6 +1357,11 @@ func TestKubeToolsAll(t *testing.T) {
 		"import_resource",
 		"apply_manifest",
 		"dry_run_apply",
+		"propose_plan",
+		"apply_resource",
+		"list_resources",
+		"sleep",
+		"fetch_url",
 	}
 
 	if len(tools) != len(expectedTools) {

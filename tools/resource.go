@@ -11,18 +11,21 @@ import (
 	"google.golang.org/adk/tool"
 	"google.golang.org/genai"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 )
 
 // GetResourceTool provides the get_resource tool for the agent.
 type GetResourceTool struct {
-	clientset *kubernetes.Clientset
+	clientset     *kubernetes.Clientset
+	dynamicClient dynamic.Interface
 }
 
 // NewGetResourceTool creates a new GetResourceTool.
-func NewGetResourceTool(clientset *kubernetes.Clientset) *GetResourceTool {
+func NewGetResourceTool(clientset *kubernetes.Clientset, dynamicClient dynamic.Interface) *GetResourceTool {
 	return &GetResourceTool{
-		clientset: clientset,
+		clientset:     clientset,
+		dynamicClient: dynamicClient,
 	}
 }
 
@@ -56,7 +59,7 @@ func (t *GetResourceTool) Declaration() *genai.FunctionDeclaration {
 			Properties: map[string]*genai.Schema{
 				"kind": {
 					Type:        "string",
-					Description: "The resource kind: deployment, service, pod, configmap, secret, ingress",
+					Description: "The resource kind. Core types: deployment, service, pod, configmap, secret, ingress. Also supports CRDs: httproute, gateway, certificate, etc.",
 				},
 				"name": {
 					Type:        "string",
@@ -65,6 +68,10 @@ func (t *GetResourceTool) Declaration() *genai.FunctionDeclaration {
 				"namespace": {
 					Type:        "string",
 					Description: "The namespace (defaults to 'default')",
+				},
+				"api_version": {
+					Type:        "string",
+					Description: "API version for CRDs (e.g., 'gateway.networking.k8s.io/v1'). Only needed for unknown resource types.",
 				},
 			},
 			Required: []string{"kind", "name"},
@@ -107,12 +114,18 @@ func (t *GetResourceTool) Run(ctx tool.Context, args any) (map[string]any, error
 		namespace = ns
 	}
 
+	apiVersion := ""
+	if av, ok := argsMap["api_version"].(string); ok {
+		apiVersion = av
+	}
+
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	var resource any
 	var err error
 
+	// Try typed clients first for known core resources
 	switch kind {
 	case "deployment", "deployments", "deploy":
 		resource, err = t.getDeployment(timeoutCtx, namespace, name)
@@ -127,9 +140,13 @@ func (t *GetResourceTool) Run(ctx tool.Context, args any) (map[string]any, error
 	case "ingress", "ingresses", "ing":
 		resource, err = t.getIngress(timeoutCtx, namespace, name)
 	default:
-		return map[string]any{
-			"error": fmt.Sprintf("unsupported resource kind: %s. Supported kinds: deployment, service, pod, configmap, secret, ingress", kind),
-		}, nil
+		// Use dynamic client fallback for unknown kinds
+		if t.dynamicClient == nil {
+			return map[string]any{
+				"error": fmt.Sprintf("unsupported resource kind: %s. Supported core kinds: deployment, service, pod, configmap, secret, ingress", kind),
+			}, nil
+		}
+		resource, err = t.getDynamicResource(timeoutCtx, namespace, name, kind, apiVersion)
 	}
 
 	if err != nil {
@@ -266,4 +283,34 @@ func cleanMetadata(result map[string]any) {
 	if metadata, ok := result["metadata"].(map[string]any); ok {
 		delete(metadata, "managedFields")
 	}
+}
+
+// getDynamicResource fetches any resource type using the dynamic client.
+func (t *GetResourceTool) getDynamicResource(ctx context.Context, namespace, name, kind, apiVersion string) (map[string]any, error) {
+	// Build GVR from kind and api_version
+	gvr, found := BuildGVRFromKindAndAPIVersion(kind, apiVersion)
+	if !found && apiVersion == "" {
+		return nil, fmt.Errorf("unknown resource kind '%s'. Provide api_version for custom resources", kind)
+	}
+
+	// Check if resource is namespaced
+	namespaced := IsNamespaced(kind)
+
+	// Get the resource interface
+	var resourceClient dynamic.ResourceInterface
+	if namespaced {
+		resourceClient = t.dynamicClient.Resource(gvr).Namespace(namespace)
+	} else {
+		resourceClient = t.dynamicClient.Resource(gvr)
+	}
+
+	obj, err := resourceClient.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get %s/%s: %v", kind, name, err)
+	}
+
+	result := obj.Object
+	cleanMetadata(result)
+
+	return result, nil
 }

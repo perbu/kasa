@@ -23,6 +23,7 @@ import (
 	"google.golang.org/adk/tool"
 	"google.golang.org/genai"
 	"gopkg.in/yaml.v3"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
@@ -65,7 +66,7 @@ func main() {
 	}
 
 	// Initialize Kubernetes client
-	clientset, err := initKubeClient(cfg.Kubernetes.Kubeconfig, cfg.Kubernetes.Context)
+	clientset, dynamicClient, err := initKubeClient(cfg.Kubernetes.Kubeconfig, cfg.Kubernetes.Context)
 	if err != nil {
 		log.Fatalf("Failed to initialize Kubernetes client: %v", err)
 	}
@@ -85,8 +86,11 @@ func main() {
 		log.Fatalf("Failed to initialize git in manifest directory: %v", err)
 	}
 
+	// Get Jina Reader API key (optional)
+	jinaAPIKey := os.Getenv("JINA_READER_API_KEY")
+
 	// Initialize tools
-	kubeTools := tools.NewKubeTools(clientset, manifestMgr)
+	kubeTools := tools.NewKubeTools(clientset, dynamicClient, manifestMgr, jinaAPIKey)
 
 	// Get API key from environment
 	apiKey := os.Getenv("GOOGLE_API_KEY")
@@ -147,22 +151,26 @@ func main() {
 		log.Fatalf("Failed to create session: %v", err)
 	}
 
-	// Non-interactive mode
+	// Non-interactive mode (no approval workflow - runs directly)
 	if *prompt != "" {
 		if *debug {
 			fmt.Printf("Model: %s | Tools: %d | Deployments: %s\n", cfg.Agent.Model, len(kubeTools.All()), manifestMgr.BaseDir())
 			fmt.Printf("Prompt: %s\n\n", *prompt)
 		}
-		if err := runAgent(ctx, r, *prompt, *debug); err != nil {
+		// Non-interactive mode doesn't support plan approval, pass nil state
+		if err := runAgent(ctx, r, nil, *prompt, *debug); err != nil {
 			log.Fatalf("Error: %v", err)
 		}
 		return
 	}
 
 	// Interactive REPL mode
-	fmt.Printf("Kasa - Kubernetes Deployment Assistant\n")
+	fmt.Printf("Kasa - Kubernetes Deployment Assistant (Safe Mode)\n")
 	fmt.Printf("Model: %s | Tools: %d | Deployments: %s\n", cfg.Agent.Model, len(kubeTools.All()), manifestMgr.BaseDir())
 	fmt.Printf("Type 'exit' or 'quit' to exit.\n\n")
+
+	// Initialize session state for plan/approval workflow
+	state := NewSessionState()
 
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
@@ -180,8 +188,46 @@ func main() {
 			break
 		}
 
+		// Handle special commands for plan approval
+		switch strings.ToLower(input) {
+		case "yes", "y", "/approve":
+			if state.HasPendingPlan() {
+				plan := state.ApprovePlan()
+				fmt.Println("Plan approved. Executing...")
+				execPrompt := FormatExecutionPrompt(plan)
+				if err := runAgent(ctx, r, state, execPrompt, *debug); err != nil {
+					fmt.Printf("Error: %v\n", err)
+				}
+				state.Reset()
+			} else {
+				fmt.Println("No pending plan to approve.")
+			}
+			continue
+		case "no", "n", "/reject":
+			if state.HasPendingPlan() {
+				state.RejectPlan()
+				fmt.Println("Plan rejected.")
+			} else {
+				fmt.Println("No pending plan to reject.")
+			}
+			continue
+		case "/plan":
+			if state.HasPendingPlan() {
+				DisplayPlan(state.PendingPlan)
+			} else {
+				fmt.Println("No pending plan.")
+			}
+			continue
+		}
+
+		// If there's a pending plan, warn the user
+		if state.HasPendingPlan() {
+			fmt.Println("You have a pending plan. Type 'yes' to approve, 'no' to reject, or '/plan' to review.")
+			continue
+		}
+
 		// Send message and handle response
-		if err := runAgent(ctx, r, input, *debug); err != nil {
+		if err := runAgent(ctx, r, state, input, *debug); err != nil {
 			fmt.Printf("Error: %v\n", err)
 		}
 	}
@@ -202,8 +248,8 @@ func loadConfig(path string) (*Config, error) {
 	return &cfg, nil
 }
 
-// initKubeClient initializes a Kubernetes clientset.
-func initKubeClient(kubeconfig, kubecontext string) (*kubernetes.Clientset, error) {
+// initKubeClient initializes a Kubernetes clientset and dynamic client.
+func initKubeClient(kubeconfig, kubecontext string) (*kubernetes.Clientset, dynamic.Interface, error) {
 	// Use default kubeconfig path if not specified
 	if kubeconfig == "" {
 		if home := homedir.HomeDir(); home != "" {
@@ -221,15 +267,20 @@ func initKubeClient(kubeconfig, kubecontext string) (*kubernetes.Clientset, erro
 	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
 		loadingRules, configOverrides).ClientConfig()
 	if err != nil {
-		return nil, fmt.Errorf("building kubeconfig: %w", err)
+		return nil, nil, fmt.Errorf("building kubeconfig: %w", err)
 	}
 
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		return nil, fmt.Errorf("creating kubernetes client: %w", err)
+		return nil, nil, fmt.Errorf("creating kubernetes client: %w", err)
 	}
 
-	return clientset, nil
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return nil, nil, fmt.Errorf("creating dynamic client: %w", err)
+	}
+
+	return clientset, dynamicClient, nil
 }
 
 // setupMarkdownRenderer creates a glamour renderer configured for the terminal.
@@ -248,7 +299,8 @@ func setupMarkdownRenderer() (*glamour.TermRenderer, error) {
 }
 
 // runAgent runs the agent with the given prompt.
-func runAgent(ctx context.Context, r *runner.Runner, prompt string, debug bool) error {
+// If state is provided, it will detect propose_plan calls and update the state.
+func runAgent(ctx context.Context, r *runner.Runner, state *SessionState, prompt string, debug bool) error {
 	if debug {
 		fmt.Printf("[DEBUG] Sending message: %s\n", prompt)
 	}
@@ -279,6 +331,19 @@ func runAgent(ctx context.Context, r *runner.Runner, prompt string, debug bool) 
 		if event != nil && event.Content != nil {
 			// Extract text from all parts in the content
 			for _, part := range event.Content.Parts {
+				// Detect propose_plan function call
+				if part.FunctionCall != nil && part.FunctionCall.Name == "propose_plan" {
+					if state != nil && part.FunctionCall.Args != nil {
+						plan := ParsePlanFromResponse(part.FunctionCall.Args)
+						if plan != nil {
+							state.SetPendingPlan(plan)
+							if debug {
+								fmt.Printf("[DEBUG] Detected propose_plan call\n")
+							}
+						}
+					}
+				}
+
 				if part.Text != "" {
 					// Clear status line before printing content
 					status.ClearForOutput()
@@ -301,6 +366,11 @@ func runAgent(ctx context.Context, r *runner.Runner, prompt string, debug bool) 
 	// Stop and clear status line
 	status.Stop()
 	fmt.Println()
+
+	// Display pending plan if one was proposed
+	if state != nil && state.HasPendingPlan() {
+		DisplayPlan(state.PendingPlan)
+	}
 
 	return nil
 }
