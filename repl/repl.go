@@ -89,7 +89,10 @@ func (r *REPL) Run(ctx context.Context) error {
 				if err := r.runAgent(ctx, state, execPrompt); err != nil {
 					fmt.Printf("Error: %v\n", err)
 				}
-				state.Reset()
+				// Only reset if no new plan was proposed during execution
+				if !state.HasPendingPlan() {
+					state.Reset()
+				}
 			} else {
 				fmt.Println("No pending plan to approve.")
 			}

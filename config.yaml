@@ -35,6 +35,7 @@ prompts:
     3. Call `propose_plan` with a description and list of actions
     4. Wait for the user to type "yes" to approve
     5. Only after approval, execute the mutating tools
+    6. After mutations, use `wait_for_condition` to verify the resources reach their desired state (e.g., deployment becomes available, pods are ready)
 
     Example:
     User: "deploy nginx"

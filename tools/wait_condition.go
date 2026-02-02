@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"google.golang.org/adk/model"
@@ -178,6 +179,21 @@ func (t *WaitForConditionTool) Run(ctx tool.Context, args any) (map[string]any, 
 					"message":         fmt.Sprintf("%s %s/%s has been deleted", kind, namespace, name),
 				}, nil
 			}
+
+			// Terminal failure - return immediately instead of continuing to poll
+			if strings.Contains(err.Error(), "terminal failure state") ||
+				strings.Contains(err.Error(), "progress deadline exceeded") {
+				return map[string]any{
+					"success":         false,
+					"condition_met":   false,
+					"elapsed_seconds": int(time.Since(startTime).Seconds()),
+					"polls":           polls,
+					"final_state":     state,
+					"failure_reason":  err.Error(),
+					"message":         fmt.Sprintf("Deployment %s/%s failed: %s", namespace, name, state),
+				}, nil
+			}
+
 			// For other errors, report them
 			return map[string]any{
 				"success":         false,
@@ -278,6 +294,27 @@ func (t *WaitForConditionTool) checkDeploymentCondition(ctx context.Context, nam
 		replicas = *dep.Spec.Replicas
 	}
 	state := fmt.Sprintf("Ready: %d/%d replicas", dep.Status.ReadyReplicas, replicas)
+
+	// Check for ProgressDeadlineExceeded (deployment stuck)
+	for _, cond := range dep.Status.Conditions {
+		if cond.Type == appsv1.DeploymentProgressing &&
+			cond.Status == corev1.ConditionFalse &&
+			cond.Reason == "ProgressDeadlineExceeded" {
+			return false, fmt.Sprintf("Deployment failed: %s", cond.Message),
+				fmt.Errorf("deployment progress deadline exceeded")
+		}
+	}
+
+	// Check pods for terminal failure states
+	pods, err := t.getDeploymentPods(ctx, dep)
+	if err == nil && len(pods) > 0 {
+		for _, pod := range pods {
+			if failed, reason := isTerminalPodFailure(&pod); failed {
+				return false, fmt.Sprintf("Pod %s failed: %s", pod.Name, reason),
+					fmt.Errorf("pod in terminal failure state: %s", reason)
+			}
+		}
+	}
 
 	switch condition {
 	case "available":
@@ -451,6 +488,59 @@ func (t *WaitForConditionTool) checkPVCCondition(ctx context.Context, name, name
 	default:
 		return false, state, fmt.Errorf("unsupported condition '%s' for pvc", condition)
 	}
+}
+
+// isTerminalPodFailure checks if a pod is in a terminal failure state.
+// Returns (isFailed, reason) where reason describes the failure.
+func isTerminalPodFailure(pod *corev1.Pod) (bool, string) {
+	// Check container statuses for failure states
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.State.Waiting != nil {
+			reason := cs.State.Waiting.Reason
+			switch reason {
+			case "CrashLoopBackOff":
+				if cs.RestartCount >= 3 {
+					return true, fmt.Sprintf("container %s in CrashLoopBackOff (%d restarts)",
+						cs.Name, cs.RestartCount)
+				}
+			case "ImagePullBackOff", "ErrImagePull", "ImagePullError":
+				return true, fmt.Sprintf("container %s: %s", cs.Name, reason)
+			case "CreateContainerConfigError", "CreateContainerError", "InvalidImageName":
+				return true, fmt.Sprintf("container %s: %s", cs.Name, reason)
+			}
+		}
+	}
+
+	// Check init container statuses
+	for _, cs := range pod.Status.InitContainerStatuses {
+		if cs.State.Waiting != nil {
+			reason := cs.State.Waiting.Reason
+			switch reason {
+			case "CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull",
+				"CreateContainerConfigError", "InvalidImageName":
+				return true, fmt.Sprintf("init container %s: %s", cs.Name, reason)
+			}
+		}
+	}
+
+	return false, ""
+}
+
+// getDeploymentPods returns pods belonging to a deployment using its selector.
+func (t *WaitForConditionTool) getDeploymentPods(ctx context.Context, dep *appsv1.Deployment) ([]corev1.Pod, error) {
+	selector, err := metav1.LabelSelectorAsSelector(dep.Spec.Selector)
+	if err != nil {
+		return nil, err
+	}
+
+	pods, err := t.clientset.CoreV1().Pods(dep.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: selector.String(),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return pods.Items, nil
 }
 
 // checkGenericCondition checks exists/deleted conditions for any resource type.
