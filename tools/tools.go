@@ -166,6 +166,15 @@ func addFunctionTool(req *model.LLMRequest, t functionTool) error {
 		return fmt.Errorf("tool %q has no declaration", t.Name())
 	}
 
+	// Inject "reason" parameter into every tool declaration
+	// This allows us to display why the tool is being called
+	if decl.Parameters != nil && decl.Parameters.Properties != nil {
+		decl.Parameters.Properties["reason"] = &genai.Schema{
+			Type:        "string",
+			Description: "Brief explanation of why you are calling this tool (shown to user)",
+		}
+	}
+
 	// Add to tools map for execution lookup
 	if req.Tools == nil {
 		req.Tools = make(map[string]any)

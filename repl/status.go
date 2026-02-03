@@ -16,6 +16,7 @@ type StatusLine struct {
 	mu            sync.Mutex
 	state         string
 	toolName      string
+	toolReason    string // reason/context for the tool call (from Args["reason"])
 	inputTokens   int32
 	outputTokens  int32
 	toolStateTime time.Time // when we entered tool state
@@ -49,6 +50,7 @@ func (s *StatusLine) Start() {
 	s.mu.Lock()
 	s.state = "thinking"
 	s.toolName = ""
+	s.toolReason = ""
 	s.inputTokens = 0
 	s.outputTokens = 0
 	s.done = make(chan struct{})
@@ -110,6 +112,8 @@ func (s *StatusLine) Update(event *session.Event) {
 			if part.FunctionCall != nil {
 				s.state = "tool"
 				s.toolName = part.FunctionCall.Name
+				// Extract reason from the tool's Args if provided
+				s.toolReason = s.extractReasonFromArgs(part.FunctionCall.Args)
 				s.toolStateTime = time.Now()
 				s.render()
 				return
@@ -117,6 +121,7 @@ func (s *StatusLine) Update(event *session.Event) {
 			if part.FunctionResponse != nil {
 				s.waitForToolDisplay()
 				s.state = "receiving"
+				s.toolReason = ""
 				s.render()
 				return
 			}
@@ -148,6 +153,26 @@ func (s *StatusLine) waitForToolDisplay() {
 	}
 }
 
+// extractReasonFromArgs extracts the "reason" field from tool call arguments.
+func (s *StatusLine) extractReasonFromArgs(args map[string]any) string {
+	if args == nil {
+		return ""
+	}
+
+	reason, ok := args["reason"].(string)
+	if !ok || reason == "" {
+		return ""
+	}
+
+	// Truncate to reasonable length for display
+	maxLen := 50
+	if len(reason) > maxLen {
+		reason = reason[:maxLen-3] + "..."
+	}
+
+	return reason
+}
+
 // ClearForOutput clears the status line before printing content.
 func (s *StatusLine) ClearForOutput() {
 	s.mu.Lock()
@@ -174,7 +199,11 @@ func (s *StatusLine) render() {
 	case "thinking":
 		status = fmt.Sprintf("%s 🧠 Thinking...", spin)
 	case "tool":
-		status = fmt.Sprintf("%s 🔧 Calling: %s", spin, s.toolName)
+		if s.toolReason != "" {
+			status = fmt.Sprintf("%s 🔧 %s: %s", spin, s.toolName, s.toolReason)
+		} else {
+			status = fmt.Sprintf("%s 🔧 Calling: %s", spin, s.toolName)
+		}
 	case "streaming":
 		status = fmt.Sprintf("%s 📥 Receiving...", spin)
 	case "receiving":
