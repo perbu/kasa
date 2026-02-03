@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"flag"
 	"fmt"
 	"log"
@@ -24,6 +25,9 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
 )
+
+//go:embed .version
+var version string
 
 func main() {
 	prompt := flag.String("prompt", "", "Run a single prompt and exit (non-interactive mode)")
@@ -150,7 +154,7 @@ func main() {
 	}
 
 	// Interactive REPL mode - print fancy welcome
-	replInstance.PrintWelcome(cfg.Agent.Model, len(kubeTools.All()), manifestMgr.BaseDir())
+	replInstance.PrintWelcome(strings.TrimSpace(version), cfg.Agent.Model, len(kubeTools.All()), manifestMgr.BaseDir())
 
 	// Run the REPL
 	if err := replInstance.Run(ctx); err != nil {
