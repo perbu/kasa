@@ -81,12 +81,15 @@ func (k *KubeTools) All() []tool.Tool {
 		// Generic resource tools using dynamic client
 		NewApplyResourceTool(k.dynamicClient, k.manifest),
 		NewListResourcesTool(k.dynamicClient),
+		NewDiffResourceTool(k.dynamicClient, k.manifest),
 		// Utility tools
 		NewSleepTool(),
 		NewWaitForConditionTool(k.clientset, k.dynamicClient),
 		// Web tools
 		NewFetchUrlTool(k.jinaAPIKey),
 		NewSearchWebTool(k.tavilyAPIKey),
+		// HTTP verification tool
+		NewHTTPRequestTool(),
 	}
 }
 

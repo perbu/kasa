@@ -1365,10 +1365,12 @@ func TestKubeToolsAll(t *testing.T) {
 		"propose_plan",
 		"apply_resource",
 		"list_resources",
+		"diff_resource",
 		"sleep",
 		"wait_for_condition",
 		"fetch_url",
 		"search_web",
+		"http_request",
 	}
 
 	if len(tools) != len(expectedTools) {
@@ -1385,4 +1387,62 @@ func TestKubeToolsAll(t *testing.T) {
 			t.Errorf("expected tool %s not found", expected)
 		}
 	}
+}
+
+// TestHTTPRequestTool tests the http_request tool.
+func TestHTTPRequestTool(t *testing.T) {
+	tool := NewHTTPRequestTool()
+
+	t.Run("validates url parameter required", func(t *testing.T) {
+		result, err := tool.Run(nil, map[string]any{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		errMsg, ok := result["error"].(string)
+		if !ok || errMsg != "url parameter is required" {
+			t.Errorf("expected 'url parameter is required' error, got: %v", result["error"])
+		}
+	})
+
+	t.Run("validates url scheme", func(t *testing.T) {
+		result, err := tool.Run(nil, map[string]any{
+			"url": "ftp://example.com",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		errMsg, ok := result["error"].(string)
+		if !ok || errMsg != "url must start with http:// or https://" {
+			t.Errorf("expected url scheme error, got: %v", result["error"])
+		}
+	})
+
+	t.Run("rejects invalid method", func(t *testing.T) {
+		result, err := tool.Run(nil, map[string]any{
+			"url":    "https://example.com",
+			"method": "POST",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		errMsg, ok := result["error"].(string)
+		if !ok || errMsg != "method must be GET or HEAD" {
+			t.Errorf("expected method error, got: %v", result["error"])
+		}
+	})
+
+	t.Run("is classified as mutating", func(t *testing.T) {
+		if tool.Category() != CategoryMutating {
+			t.Errorf("expected CategoryMutating, got %v", tool.Category())
+		}
+	})
+
+	t.Run("tool name is correct", func(t *testing.T) {
+		if tool.Name() != "http_request" {
+			t.Errorf("expected name 'http_request', got %s", tool.Name())
+		}
+	})
 }

@@ -156,6 +156,14 @@ func main() {
 	// Interactive REPL mode - print fancy welcome
 	replInstance.PrintWelcome(strings.TrimSpace(version), cfg.Agent.Model, len(kubeTools.All()), manifestMgr.BaseDir())
 
+	// Run drift scan before starting REPL
+	scanResults, err := tools.RunDriftScan(ctx, dynamicClient, manifestMgr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: drift scan failed: %v\n", err)
+	} else if scanResults != nil {
+		printDriftScanResults(scanResults)
+	}
+
 	// Run the REPL
 	if err := replInstance.Run(ctx); err != nil {
 		log.Fatalf("REPL error: %v", err)
@@ -195,4 +203,32 @@ func initKubeClient(kubeconfig, kubecontext string) (*kubernetes.Clientset, dyna
 	}
 
 	return clientset, dynamicClient, nil
+}
+
+// printDriftScanResults prints the drift scan results table.
+func printDriftScanResults(results *tools.DriftScanResults) {
+	if results.Total == 0 {
+		return
+	}
+
+	if results.InSync == results.Total {
+		fmt.Printf("Drift scan: %d manifests, all in sync\n", results.Total)
+		return
+	}
+
+	fmt.Printf("Drift scan: %d manifests\n", results.Total)
+	for _, r := range results.Results {
+		label := fmt.Sprintf("  %s/%s/%s", r.Namespace, r.Name, r.Kind)
+		switch r.Status {
+		case "in_sync":
+			fmt.Printf("%-40s OK\n", label)
+		case "drifted":
+			fmt.Printf("%-40s DRIFTED (%d fields)\n", label, len(r.Diffs))
+		case "missing":
+			fmt.Printf("%-40s MISSING\n", label)
+		case "error":
+			fmt.Printf("%-40s ERROR (%s)\n", label, r.Error)
+		}
+	}
+	fmt.Println()
 }

@@ -26,18 +26,41 @@ func DisplayPlan(plan *Plan) {
 		md.WriteString(fmt.Sprintf("**Reason:** %s\n\n", action.Reason))
 
 		if len(action.Parameters) > 0 {
-			md.WriteString("| Parameter | Value |\n")
-			md.WriteString("|-----------|-------|\n")
+			// Separate simple values from multi-line values
+			var simpleParams []struct{ key, value string }
+			var multiLineParams []struct{ key, value string }
+
 			for k, v := range action.Parameters {
 				valueStr := fmt.Sprintf("%v", v)
-				if len(valueStr) > 50 {
-					valueStr = valueStr[:47] + "..."
+				if strings.Contains(valueStr, "\n") || len(valueStr) > 80 {
+					multiLineParams = append(multiLineParams, struct{ key, value string }{k, valueStr})
+				} else {
+					simpleParams = append(simpleParams, struct{ key, value string }{k, valueStr})
 				}
-				// Escape pipe characters in values
-				valueStr = strings.ReplaceAll(valueStr, "|", "\\|")
-				md.WriteString(fmt.Sprintf("| `%s` | `%s` |\n", k, valueStr))
 			}
-			md.WriteString("\n")
+
+			// Show simple params in a table
+			if len(simpleParams) > 0 {
+				md.WriteString("| Parameter | Value |\n")
+				md.WriteString("|-----------|-------|\n")
+				for _, p := range simpleParams {
+					// Escape pipe characters in values
+					valueStr := strings.ReplaceAll(p.value, "|", "\\|")
+					md.WriteString(fmt.Sprintf("| `%s` | `%s` |\n", p.key, valueStr))
+				}
+				md.WriteString("\n")
+			}
+
+			// Show multi-line params in code blocks
+			for _, p := range multiLineParams {
+				md.WriteString(fmt.Sprintf("**%s:**\n", p.key))
+				md.WriteString("```yaml\n")
+				md.WriteString(p.value)
+				if !strings.HasSuffix(p.value, "\n") {
+					md.WriteString("\n")
+				}
+				md.WriteString("```\n\n")
+			}
 		}
 	}
 
@@ -74,12 +97,14 @@ func formatParameters(params map[string]any) string {
 
 	parts := make([]string, 0, len(params))
 	for k, v := range params {
-		// Truncate long values
 		valueStr := fmt.Sprintf("%v", v)
-		if len(valueStr) > 50 {
-			valueStr = valueStr[:47] + "..."
+		// For multi-line values, show first line with indicator
+		if strings.Contains(valueStr, "\n") {
+			firstLine := strings.SplitN(valueStr, "\n", 2)[0]
+			parts = append(parts, fmt.Sprintf("%s=%s... (multi-line)", k, firstLine))
+		} else {
+			parts = append(parts, fmt.Sprintf("%s=%s", k, valueStr))
 		}
-		parts = append(parts, fmt.Sprintf("%s=%s", k, valueStr))
 	}
 	return strings.Join(parts, ", ")
 }
