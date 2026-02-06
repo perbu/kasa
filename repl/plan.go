@@ -2,20 +2,42 @@ package repl
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/charmbracelet/glamour"
 )
 
-// DisplayPlan formats and prints a proposed plan for user review.
-func DisplayPlan(plan *Plan) {
+// RenderPlan renders a plan to a string using glamour markdown rendering.
+// Returns the rendered string, or plain markdown if rendering fails.
+func RenderPlan(plan *Plan) string {
 	if plan == nil {
-		fmt.Println("No plan to display.")
-		return
+		return "No plan to display.\n"
 	}
 
-	// Build markdown content
+	md := buildPlanMarkdown(plan)
+
+	renderer, err := glamour.NewTermRenderer(
+		glamour.WithStandardStyle("dark"),
+		glamour.WithWordWrap(80),
+	)
+	if err != nil {
+		return md
+	}
+
+	out, err := renderer.Render(md)
+	if err != nil {
+		return md
+	}
+	return out
+}
+
+// DisplayPlan formats and prints a proposed plan for user review.
+func DisplayPlan(plan *Plan) {
+	fmt.Print(RenderPlan(plan))
+}
+
+// buildPlanMarkdown builds the markdown string for a plan.
+func buildPlanMarkdown(plan *Plan) string {
 	var md strings.Builder
 	md.WriteString("# Proposed Plan\n\n")
 	md.WriteString(plan.Description)
@@ -66,27 +88,7 @@ func DisplayPlan(plan *Plan) {
 
 	md.WriteString("---\n\n")
 	md.WriteString("**Commands:** `yes` approve · `no` reject · `/plan` show again\n")
-
-	// Render with glamour
-	renderer, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(80),
-	)
-	if err != nil {
-		// Fallback to plain output
-		fmt.Fprintln(os.Stderr, "Warning: could not create renderer:", err)
-		fmt.Println(md.String())
-		return
-	}
-
-	out, err := renderer.Render(md.String())
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Warning: could not render markdown:", err)
-		fmt.Println(md.String())
-		return
-	}
-
-	fmt.Print(out)
+	return md.String()
 }
 
 // formatParameters formats parameter map for display.

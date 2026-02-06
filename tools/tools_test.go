@@ -1363,6 +1363,7 @@ func TestKubeToolsAll(t *testing.T) {
 		"apply_manifest",
 		"dry_run_apply",
 		"propose_plan",
+		"ask_clarification",
 		"apply_resource",
 		"list_resources",
 		"diff_resource",

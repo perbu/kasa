@@ -78,6 +78,7 @@ func (k *KubeTools) All() []tool.Tool {
 		NewApplyManifestTool(k.clientset, k.manifest),
 		NewDryRunApplyTool(k.clientset, k.manifest),
 		NewProposePlanTool(),
+		NewAskClarificationTool(),
 		// Generic resource tools using dynamic client
 		NewApplyResourceTool(k.dynamicClient, k.manifest),
 		NewListResourcesTool(k.dynamicClient),

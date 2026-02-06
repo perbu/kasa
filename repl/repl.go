@@ -3,18 +3,15 @@ package repl
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
-	"path/filepath"
-	"strings"
+	"syscall"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
-	"github.com/chzyer/readline"
 	"golang.org/x/term"
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/runner"
 	"google.golang.org/genai"
-	"k8s.io/client-go/util/homedir"
 )
 
 // REPL manages the interactive read-eval-print loop.
@@ -31,160 +28,78 @@ func New(r *runner.Runner, debug bool) *REPL {
 	}
 }
 
-// Run starts the interactive REPL loop.
+// Run starts the interactive REPL loop using bubbletea.
 func (r *REPL) Run(ctx context.Context) error {
-	// Initialize session state for plan/approval workflow
-	state := NewSessionState()
+	// Drain any stale terminal query responses (OSC, CPR) from stdin.
+	// Libraries like termenv/lipgloss/glamour query the terminal for
+	// background color and capabilities during init. Responses that arrive
+	// late end up in stdin and get interpreted as user input by bubbletea.
+	drainStdin()
 
-	// Set up readline with history
-	historyFile := ""
-	if home := homedir.HomeDir(); home != "" {
-		kasaDir := filepath.Join(home, ".kasa")
-		if err := os.MkdirAll(kasaDir, 0755); err == nil {
-			historyFile = filepath.Join(kasaDir, "history")
-		}
-	}
+	m := newModel(r.runner, r.debug)
+	p := tea.NewProgram(m, tea.WithContext(ctx))
 
-	rl, err := readline.NewEx(&readline.Config{
-		Prompt:            "> ",
-		HistoryFile:       historyFile,
-		HistorySearchFold: true,
-		InterruptPrompt:   "^C",
-		EOFPrompt:         "exit",
-	})
-	if err != nil {
-		return fmt.Errorf("failed to initialize readline: %w", err)
-	}
-	defer rl.Close()
+	// Store program reference so the model can call Println.
+	// m.program is a *programRef (shared pointer), so this propagates
+	// to the copy held inside the tea.Program.
+	m.program.p = p
 
-	for {
-		line, err := rl.Readline()
-		if err != nil {
-			if err == readline.ErrInterrupt {
-				continue // Ctrl+C, just show new prompt
-			}
-			if err == io.EOF {
-				fmt.Println("Goodbye!")
-				break
-			}
-			return fmt.Errorf("error reading input: %w", err)
-		}
-
-		input := strings.TrimSpace(line)
-		if input == "" {
-			continue
-		}
-		if input == "exit" || input == "quit" {
-			fmt.Println("Goodbye!")
-			break
-		}
-
-		// Handle special commands for plan approval
-		switch strings.ToLower(input) {
-		case "yes", "y", "/approve":
-			if state.HasPendingPlan() {
-				plan := state.ApprovePlan()
-				fmt.Println("Plan approved. Executing...")
-				execPrompt := FormatExecutionPrompt(plan)
-				if err := r.runAgent(ctx, state, execPrompt); err != nil {
-					fmt.Printf("Error: %v\n", err)
-				}
-				// Only reset if no new plan was proposed during execution
-				if !state.HasPendingPlan() {
-					state.Reset()
-				}
-			} else {
-				fmt.Println("No pending plan to approve.")
-			}
-			continue
-		case "no", "n", "/reject":
-			if state.HasPendingPlan() {
-				state.RejectPlan()
-				fmt.Println("Plan rejected.")
-			} else {
-				fmt.Println("No pending plan to reject.")
-			}
-			continue
-		case "/plan":
-			if state.HasPendingPlan() {
-				DisplayPlan(state.PendingPlan)
-			} else {
-				fmt.Println("No pending plan.")
-			}
-			continue
-		}
-
-		// If there's a pending plan, warn the user
-		if state.HasPendingPlan() {
-			fmt.Println("You have a pending plan. Type 'yes' to approve, 'no' to reject, or '/plan' to review.")
-			continue
-		}
-
-		// Send message and handle response
-		if err := r.runAgent(ctx, state, input); err != nil {
-			fmt.Printf("Error: %v\n", err)
-		}
-	}
-
-	return nil
+	_, err := p.Run()
+	return err
 }
 
 // RunSinglePrompt runs the agent with a single prompt (non-interactive mode).
 func (r *REPL) RunSinglePrompt(ctx context.Context, prompt string) error {
-	return r.runAgent(ctx, nil, prompt)
+	return r.runAgentSync(ctx, nil, prompt)
 }
 
-// runAgent runs the agent with the given prompt.
-// If state is provided, it will detect propose_plan calls and update the state.
-func (r *REPL) runAgent(ctx context.Context, state *SessionState, prompt string) error {
+// runAgentSync runs the agent synchronously with the given prompt.
+// Used for non-interactive mode. Uses the hand-rolled StatusLine.
+func (r *REPL) runAgentSync(ctx context.Context, state *SessionState, prompt string) error {
 	if r.debug {
 		fmt.Printf("[DEBUG] Sending message: %s\n", prompt)
 	}
 
-	// Setup markdown renderer
 	mdRenderer, mdErr := setupMarkdownRenderer()
 	if mdErr != nil && r.debug {
 		fmt.Printf("[DEBUG] Markdown renderer setup failed: %v\n", mdErr)
 	}
 
-	// Create user message content
 	userMessage := genai.NewContentFromText(prompt, genai.RoleUser)
 
-	// Initialize and start status line
 	status := NewStatusLine()
 	status.Start()
 
-	// Execute agent with the user message
 	for event, err := range r.runner.Run(ctx, "user1", "session1", userMessage, agent.RunConfig{}) {
 		if err != nil {
 			status.Stop()
 			return fmt.Errorf("agent execution failed: %w", err)
 		}
 
-		// Update status line with event info
 		status.Update(event)
 
 		if event != nil && event.Content != nil {
-			// Extract text from all parts in the content
 			for _, part := range event.Content.Parts {
-				// Detect propose_plan function call
 				if part.FunctionCall != nil && part.FunctionCall.Name == "propose_plan" {
 					if state != nil && part.FunctionCall.Args != nil {
 						plan := ParsePlanFromResponse(part.FunctionCall.Args)
 						if plan != nil {
 							state.SetPendingPlan(plan)
-							if r.debug {
-								fmt.Printf("[DEBUG] Detected propose_plan call\n")
-							}
+						}
+					}
+				}
+
+				if part.FunctionCall != nil && part.FunctionCall.Name == "ask_clarification" {
+					if state != nil && part.FunctionCall.Args != nil {
+						clarification := ParseClarificationFromResponse(part.FunctionCall.Args)
+						if clarification != nil {
+							state.PendingClarification = clarification
 						}
 					}
 				}
 
 				if part.Text != "" {
-					// Clear status line before printing content
 					status.ClearForOutput()
-
-					// Try to render as markdown
 					if mdRenderer != nil {
 						rendered, renderErr := mdRenderer.Render(part.Text)
 						if renderErr == nil {
@@ -192,18 +107,20 @@ func (r *REPL) runAgent(ctx context.Context, state *SessionState, prompt string)
 							continue
 						}
 					}
-					// Fallback to plain text
 					fmt.Print(part.Text)
 				}
 			}
 		}
 	}
 
-	// Stop and clear status line
 	status.Stop()
 	fmt.Println()
 
-	// Display pending plan if one was proposed
+	if state != nil && state.PendingClarification != nil {
+		DisplayClarification(state.PendingClarification)
+		state.PendingClarification = nil
+	}
+
 	if state != nil && state.HasPendingPlan() {
 		DisplayPlan(state.PendingPlan)
 	}
@@ -228,7 +145,6 @@ Commands: **yes**/**no** to approve/reject plans, **exit** to quit.
 
 	renderer, err := setupMarkdownRenderer()
 	if err != nil {
-		// Fallback to plain text
 		fmt.Printf("Kasa %s - Kubernetes Deployment Assistant (Safe Mode)\n", version)
 		fmt.Printf("Model: %s | Tools: %d | Deployments: %s\n", model, toolCount, deploymentsDir)
 		fmt.Printf("Type 'exit' or 'quit' to exit.\n\n")
@@ -237,7 +153,6 @@ Commands: **yes**/**no** to approve/reject plans, **exit** to quit.
 
 	rendered, err := renderer.Render(welcome)
 	if err != nil {
-		// Fallback to plain text
 		fmt.Printf("Kasa %s - Kubernetes Deployment Assistant (Safe Mode)\n", version)
 		fmt.Printf("Model: %s | Tools: %d | Deployments: %s\n", model, toolCount, deploymentsDir)
 		fmt.Printf("Type 'exit' or 'quit' to exit.\n\n")
@@ -249,15 +164,44 @@ Commands: **yes**/**no** to approve/reject plans, **exit** to quit.
 
 // setupMarkdownRenderer creates a glamour renderer configured for the terminal.
 func setupMarkdownRenderer() (*glamour.TermRenderer, error) {
-	// Detect terminal width
 	width := 80
 	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
 		width = w
 	}
 
-	// Create renderer with auto style detection
 	return glamour.NewTermRenderer(
 		glamour.WithAutoStyle(),
 		glamour.WithWordWrap(width),
 	)
+}
+
+// drainStdin discards any bytes sitting in the terminal input buffer.
+// This prevents stale escape sequence responses (from terminal color/capability
+// queries) from being interpreted as user input by bubbletea.
+func drainStdin() {
+	fd := int(os.Stdin.Fd())
+	if !term.IsTerminal(fd) {
+		return
+	}
+
+	// Enter raw mode so escape sequences (which lack newlines) become readable.
+	oldState, err := term.MakeRaw(fd)
+	if err != nil {
+		return
+	}
+	defer term.Restore(fd, oldState)
+
+	// Set non-blocking so we only read what's already buffered.
+	if err := syscall.SetNonblock(fd, true); err != nil {
+		return
+	}
+	defer syscall.SetNonblock(fd, false)
+
+	buf := make([]byte, 256)
+	for {
+		n, _ := syscall.Read(fd, buf)
+		if n <= 0 {
+			break
+		}
+	}
 }

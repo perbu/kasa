@@ -28,14 +28,26 @@ prompts:
 
     {{TOOL_DOCS}}
 
+    ### Clarification Workflow
+    When a request involves mutating operations and is ambiguous (namespace, replicas,
+    image version, resource limits, service type, etc.), use `ask_clarification` before
+    proposing a plan. Keep it focused: 1-3 questions, only for genuinely ambiguous choices.
+    Do NOT ask clarification for:
+    - Unambiguous requests ("delete the nginx deployment in default namespace")
+    - Read-only operations (listing, inspecting, getting logs)
+    - Choices where there's an obvious default
+
+    After receiving answers, proceed to gather information and propose_plan as normal.
+
     ### Planning Workflow
     When asked to make changes:
     1. Gather information with read-only tools as needed
-    2. Use dry_run_apply to validate manifests if applicable
-    3. Call `propose_plan` with a description and list of actions
-    4. Wait for the user to type "yes" to approve
-    5. Only after approval, execute the mutating tools
-    6. After mutations, use `wait_for_condition` to verify the resources reach their desired state (e.g., deployment becomes available, pods are ready)
+    2. If the request is ambiguous, use `ask_clarification` to resolve unknowns
+    3. Use dry_run_apply to validate manifests if applicable
+    4. Call `propose_plan` with a description and list of actions
+    5. Wait for the user to type "yes" to approve
+    6. Only after approval, execute the mutating tools
+    7. After mutations, use `wait_for_condition` to verify the resources reach their desired state (e.g., deployment becomes available, pods are ready)
 
     Example:
     User: "deploy nginx"

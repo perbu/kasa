@@ -112,8 +112,8 @@ func diffValues(stored, live any, path string) []DiffEntry {
 		return diffSlices(storedSlice, liveSlice, path)
 	}
 
-	// Scalar comparison
-	if !reflect.DeepEqual(stored, live) {
+	// Scalar comparison with numeric normalization
+	if !numericallyEqual(stored, live) {
 		return []DiffEntry{{
 			Path:       path,
 			ChangeType: "changed",
@@ -123,6 +123,44 @@ func diffValues(stored, live any, path string) []DiffEntry {
 	}
 
 	return nil
+}
+
+// numericallyEqual compares two values, normalizing numeric types so that
+// int(80), int64(80), and float64(80) are considered equal.
+func numericallyEqual(a, b any) bool {
+	if reflect.DeepEqual(a, b) {
+		return true
+	}
+	af, aOk := toFloat64(a)
+	bf, bOk := toFloat64(b)
+	if aOk && bOk {
+		return af == bf
+	}
+	return false
+}
+
+// toFloat64 converts numeric types to float64 for comparison.
+func toFloat64(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case uint:
+		return float64(n), true
+	case uint32:
+		return float64(n), true
+	case uint64:
+		return float64(n), true
+	default:
+		return 0, false
+	}
 }
 
 // diffSlices compares two slices element by element.
@@ -187,6 +225,9 @@ func FetchAndCleanLiveResource(ctx context.Context, dynClient dynamic.Interface,
 }
 
 // CompareManifest compares a stored manifest YAML against the live cluster resource.
+// It applies cleanForImport to both sides and uses one-directional comparison:
+// only fields present in the stored manifest are checked. Server-added defaults
+// (fields only in live) are ignored.
 func CompareManifest(ctx context.Context, dynClient dynamic.Interface, namespace, name, kind string, storedYAML []byte) DriftResult {
 	result := DriftResult{
 		Namespace: namespace,
@@ -205,6 +246,10 @@ func CompareManifest(ctx context.Context, dynClient dynamic.Interface, namespace
 	// Extract apiVersion from stored manifest for GVR resolution
 	apiVersion, _ := storedMap["apiVersion"].(string)
 
+	// Clean stored manifest too — handles manifests imported before cleanForImport
+	// was comprehensive, and ensures both sides get identical treatment.
+	cleanForImport(storedMap)
+
 	// Fetch and clean live resource
 	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -221,8 +266,18 @@ func CompareManifest(ctx context.Context, dynClient dynamic.Interface, namespace
 		return result
 	}
 
-	// Compare
-	diffs := DiffMaps(storedMap, liveMap, "")
+	// Full bidirectional diff
+	allDiffs := DiffMaps(storedMap, liveMap, "")
+
+	// Filter to only meaningful drift: "changed" and "removed" entries.
+	// "added" means the field only exists in the live resource (server default) — not drift.
+	var diffs []DiffEntry
+	for _, d := range allDiffs {
+		if d.ChangeType != "added" {
+			diffs = append(diffs, d)
+		}
+	}
+
 	if len(diffs) == 0 {
 		result.Status = "in_sync"
 	} else {

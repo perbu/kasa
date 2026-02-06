@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/charmbracelet/glamour"
 	"github.com/joho/godotenv"
 	"github.com/perbu/kasa/manifest"
 	"github.com/perbu/kasa/repl"
@@ -104,6 +105,22 @@ func main() {
 	toolDocs := kubeTools.GenerateToolDocs()
 	systemPrompt := strings.Replace(cfg.Prompts.System, "{{TOOL_DOCS}}", toolDocs, 1)
 
+	// In interactive mode, run drift scan and inject results into system prompt
+	isInteractive := *prompt == ""
+	var scanResults *tools.DriftScanResults
+	if isInteractive {
+		progress := func(current, total int, namespace, name, kind string) {
+			fmt.Fprintf(os.Stderr, "\rDrift scan: checking %s/%s/%s (%d/%d)...", namespace, name, kind, current+1, total)
+		}
+		scanResults, err = tools.RunDriftScan(ctx, dynamicClient, manifestMgr, progress)
+		fmt.Fprintf(os.Stderr, "\r\033[K")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: drift scan failed: %v\n", err)
+		} else if scanResults != nil {
+			systemPrompt += tools.FormatDriftContext(scanResults)
+		}
+	}
+
 	agentConfig := llmagent.Config{
 		Name:        cfg.Agent.Name,
 		Description: "Kubernetes deployment assistant",
@@ -142,7 +159,7 @@ func main() {
 	replInstance := repl.New(r, *debug)
 
 	// Non-interactive mode (no approval workflow - runs directly)
-	if *prompt != "" {
+	if !isInteractive {
 		if *debug {
 			fmt.Printf("Model: %s | Tools: %d | Deployments folder: %s\n", cfg.Agent.Model, len(kubeTools.All()), manifestMgr.BaseDir())
 			fmt.Printf("Prompt: %s\n\n", *prompt)
@@ -156,11 +173,8 @@ func main() {
 	// Interactive REPL mode - print fancy welcome
 	replInstance.PrintWelcome(strings.TrimSpace(version), cfg.Agent.Model, len(kubeTools.All()), manifestMgr.BaseDir())
 
-	// Run drift scan before starting REPL
-	scanResults, err := tools.RunDriftScan(ctx, dynamicClient, manifestMgr)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: drift scan failed: %v\n", err)
-	} else if scanResults != nil {
+	// Display drift scan results to the user
+	if scanResults != nil {
 		printDriftScanResults(scanResults)
 	}
 
@@ -205,30 +219,28 @@ func initKubeClient(kubeconfig, kubecontext string) (*kubernetes.Clientset, dyna
 	return clientset, dynamicClient, nil
 }
 
-// printDriftScanResults prints the drift scan results table.
+// printDriftScanResults renders the drift scan results as a markdown table via glamour.
 func printDriftScanResults(results *tools.DriftScanResults) {
-	if results.Total == 0 {
+	md := tools.FormatDriftScanResults(results)
+	if md == "" {
 		return
 	}
 
-	if results.InSync == results.Total {
-		fmt.Printf("Drift scan: %d manifests, all in sync\n", results.Total)
+	renderer, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(80),
+	)
+	if err != nil {
+		// Fallback to plain text
+		fmt.Print(md)
 		return
 	}
 
-	fmt.Printf("Drift scan: %d manifests\n", results.Total)
-	for _, r := range results.Results {
-		label := fmt.Sprintf("  %s/%s/%s", r.Namespace, r.Name, r.Kind)
-		switch r.Status {
-		case "in_sync":
-			fmt.Printf("%-40s OK\n", label)
-		case "drifted":
-			fmt.Printf("%-40s DRIFTED (%d fields)\n", label, len(r.Diffs))
-		case "missing":
-			fmt.Printf("%-40s MISSING\n", label)
-		case "error":
-			fmt.Printf("%-40s ERROR (%s)\n", label, r.Error)
-		}
+	out, err := renderer.Render(md)
+	if err != nil {
+		fmt.Print(md)
+		return
 	}
-	fmt.Println()
+
+	fmt.Print(out)
 }

@@ -23,10 +23,23 @@ type Plan struct {
 	Actions     []PlannedAction `json:"actions"`
 }
 
+// ClarificationQuestion represents a single question in a clarification request.
+type ClarificationQuestion struct {
+	Question string   `json:"question"`
+	Options  []string `json:"options,omitempty"`
+}
+
+// Clarification represents a set of clarifying questions for the user.
+type Clarification struct {
+	Context   string                  `json:"context"`
+	Questions []ClarificationQuestion `json:"questions"`
+}
+
 // SessionState tracks the execution state for plan/approval workflow.
 type SessionState struct {
-	Mode        ExecutionMode
-	PendingPlan *Plan
+	Mode                 ExecutionMode
+	PendingPlan          *Plan
+	PendingClarification *Clarification
 }
 
 // NewSessionState creates a new session state in planning mode.

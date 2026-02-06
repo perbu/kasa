@@ -253,6 +253,49 @@ func TestDiffMaps_MultipleDiffs(t *testing.T) {
 	}
 }
 
+func TestDiffMaps_NumericTypeNormalization(t *testing.T) {
+	// YAML parses 80 as int, JSON roundtrip makes it float64.
+	// These should be considered equal.
+	stored := map[string]any{
+		"spec": map[string]any{
+			"ports": []any{
+				map[string]any{
+					"port":       int(80),
+					"targetPort": int64(5678),
+				},
+			},
+		},
+	}
+	live := map[string]any{
+		"spec": map[string]any{
+			"ports": []any{
+				map[string]any{
+					"port":       float64(80),
+					"targetPort": float64(5678),
+				},
+			},
+		},
+	}
+
+	diffs := DiffMaps(stored, live, "")
+	if len(diffs) != 0 {
+		t.Errorf("expected 0 diffs for numerically equal values, got %d: %+v", len(diffs), diffs)
+	}
+}
+
+func TestDiffMaps_NumericActualDifference(t *testing.T) {
+	stored := map[string]any{"replicas": int(3)}
+	live := map[string]any{"replicas": float64(5)}
+
+	diffs := DiffMaps(stored, live, "")
+	if len(diffs) != 1 {
+		t.Fatalf("expected 1 diff, got %d: %+v", len(diffs), diffs)
+	}
+	if diffs[0].ChangeType != "changed" {
+		t.Errorf("expected 'changed', got %q", diffs[0].ChangeType)
+	}
+}
+
 func TestDiffMaps_SliceShorterLive(t *testing.T) {
 	stored := map[string]any{
 		"items": []any{"a", "b", "c"},
