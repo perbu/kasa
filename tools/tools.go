@@ -70,6 +70,8 @@ func (k *KubeTools) All() []tool.Tool {
 		NewCreateIngressTool(k.clientset, k.manifest),
 		NewCheckDeploymentHealthTool(k.clientset),
 		NewCommitManifestsTool(k.manifest),
+		NewSyncManifestsTool(k.manifest),
+		NewPushManifestsTool(k.manifest),
 		NewListManifestsTool(k.manifest),
 		NewReadManifestTool(k.manifest),
 		NewDeleteManifestTool(k.clientset, k.manifest),

@@ -97,6 +97,17 @@ func (t *CommitManifestsTool) Run(ctx tool.Context, args any) (map[string]any, e
 		}, nil
 	}
 
+	// Auto-push if remote is configured
+	if err := t.manifest.Push(); err != nil {
+		return map[string]any{
+			"success":      true,
+			"status":       "committed_not_pushed",
+			"message":      fmt.Sprintf("Committed changes: %s", message),
+			"push_warning": err.Error(),
+			"directory":    t.manifest.BaseDir(),
+		}, nil
+	}
+
 	return map[string]any{
 		"success":   true,
 		"message":   fmt.Sprintf("Committed changes: %s", message),

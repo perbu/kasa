@@ -318,6 +318,81 @@ func isDirEmpty(path string) (bool, error) {
 	return len(entries) == 0, nil
 }
 
+// SetupRemote configures the git remote "origin" to the given URL.
+// If origin already exists with the same URL, this is a no-op.
+// If origin exists with a different URL, it updates the URL.
+// If origin doesn't exist, it adds it.
+func (m *Manager) SetupRemote(url string) error {
+	// Check if remote "origin" already exists
+	cmd := exec.Command("git", "remote", "get-url", "origin")
+	cmd.Dir = m.baseDir
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		// Remote exists — check if URL matches
+		existing := strings.TrimSpace(string(output))
+		if existing == url {
+			return nil
+		}
+		// URL differs, update it
+		cmd = exec.Command("git", "remote", "set-url", "origin", url)
+		cmd.Dir = m.baseDir
+		output, err = cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("git remote set-url failed: %w\nOutput: %s", err, string(output))
+		}
+		return nil
+	}
+
+	// Remote doesn't exist, add it
+	cmd = exec.Command("git", "remote", "add", "origin", url)
+	cmd.Dir = m.baseDir
+	output, err = cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git remote add failed: %w\nOutput: %s", err, string(output))
+	}
+	return nil
+}
+
+// HasRemote returns true if a git remote "origin" is configured.
+func (m *Manager) HasRemote() bool {
+	cmd := exec.Command("git", "remote", "get-url", "origin")
+	cmd.Dir = m.baseDir
+	return cmd.Run() == nil
+}
+
+// Pull fetches and fast-forward merges from the remote.
+// If no remote is configured, this is a no-op.
+// Returns an error if fast-forward is not possible (diverged history).
+func (m *Manager) Pull() error {
+	if !m.HasRemote() {
+		return nil
+	}
+
+	cmd := exec.Command("git", "pull", "--ff-only", "origin", "HEAD")
+	cmd.Dir = m.baseDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("remote has diverged from local — resolve manually in %s\ngit output: %s", m.baseDir, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+// Push pushes the current branch to the remote.
+// If no remote is configured, this is a no-op.
+func (m *Manager) Push() error {
+	if !m.HasRemote() {
+		return nil
+	}
+
+	cmd := exec.Command("git", "push", "origin", "HEAD")
+	cmd.Dir = m.baseDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("push failed — remote may have new changes, pull first\ngit output: %s", strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
 // ManifestExists checks if a manifest file already exists.
 func (m *Manager) ManifestExists(namespace, app, resourceType string) bool {
 	path := filepath.Join(m.baseDir, namespace, app, resourceType+".yaml")

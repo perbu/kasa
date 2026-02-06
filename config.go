@@ -19,6 +19,7 @@ type Config struct {
 	} `yaml:"agent"`
 	Deployments struct {
 		Directory string `yaml:"directory"`
+		Remote    string `yaml:"remote"`
 	} `yaml:"deployments"`
 	Prompts struct {
 		System string `yaml:"system"`

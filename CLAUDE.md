@@ -266,6 +266,17 @@ manager.Commit("Deploy nginx to default namespace")
 - `gopkg.in/yaml.v3` - Config parsing
 - `sigs.k8s.io/yaml` - YAML/JSON conversion for Kubernetes objects
 
+## Code Review
+
+Use the `reviewer` CLI tool to get an AI-powered second opinion on a package:
+
+```bash
+reviewer <directory>                          # Review a package
+reviewer --focus security,performance <dir>   # Focus on specific areas
+```
+
+Requires `git2llm` in PATH. Uses Gemini to review code and streams markdown output.
+
 ## Testing
 
 Requires:

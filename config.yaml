@@ -10,6 +10,8 @@ agent:
 deployments:
   # Directory where manifests are stored (supports ~ for home directory)
   directory: deployments
+  # Git remote URL for team sync (e.g., git@github.com:org/manifests.git)
+  # remote: ""
 
 # Prompts for tuning
 prompts:

@@ -69,6 +69,16 @@ func main() {
 		log.Fatalf("Failed to initialize git in manifest directory: %v", err)
 	}
 
+	// Set up git remote and auto-pull if configured
+	if cfg.Deployments.Remote != "" {
+		if err := manifestMgr.SetupRemote(cfg.Deployments.Remote); err != nil {
+			log.Fatalf("Failed to set up git remote: %v", err)
+		}
+		if err := manifestMgr.Pull(); err != nil {
+			log.Printf("Warning: failed to pull manifests: %v", err)
+		}
+	}
+
 	// Get API keys for web tools (optional)
 	jinaAPIKey := os.Getenv("JINA_READER_API_KEY")
 	tavilyAPIKey := os.Getenv("TAVILY_API_KEY")
