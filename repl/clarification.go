@@ -59,6 +59,27 @@ func buildClarificationMarkdown(c *Clarification) string {
 	return md.String()
 }
 
+// ensureAllQuestionsHaveOptions adds default "Yes"/"No" options to any question
+// that lacks explicit options, so the interactive modal can always be used.
+func ensureAllQuestionsHaveOptions(c *Clarification) {
+	for i := range c.Questions {
+		if len(c.Questions[i].Options) == 0 {
+			c.Questions[i].Options = []string{"Yes", "No"}
+		}
+	}
+}
+
+// formatClarificationAnswers formats selected answers as a numbered list for the agent.
+func formatClarificationAnswers(c *Clarification, answers []string) string {
+	var sb strings.Builder
+	for i, q := range c.Questions {
+		if i < len(answers) {
+			sb.WriteString(fmt.Sprintf("%d. %s: %s\n", i+1, q.Question, answers[i]))
+		}
+	}
+	return sb.String()
+}
+
 // ParseClarificationFromResponse extracts a Clarification from the ask_clarification tool args.
 func ParseClarificationFromResponse(args map[string]any) *Clarification {
 	contextStr, _ := args["context"].(string)

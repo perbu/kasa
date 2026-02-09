@@ -54,6 +54,10 @@ type model struct {
 	// saved textarea content when navigating history
 	savedInput string
 
+	// clarification modal
+	showClarification bool
+	clarModal         clarificationModal
+
 	quitting bool
 }
 
@@ -121,6 +125,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 
+	// Handle clarification modal results
+	case clarificationAnswerMsg:
+		return m.handleClarificationAnswer(msg)
+	case clarificationCancelMsg:
+		return m.handleClarificationCancel()
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -134,8 +144,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		// Ctrl+C: cancel agent or quit
+		// Ctrl+C: cancel agent, dismiss modal, or quit
 		if msg.String() == "ctrl+c" {
+			if m.showClarification {
+				return m.handleClarificationCancel()
+			}
 			if m.agentBusy && m.agentCancel != nil {
 				m.agentCancel()
 				m.statusText = "Cancelling..."
@@ -144,6 +157,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			m.history.Save()
 			return m, tea.Quit
+		}
+
+		// Delegate to clarification modal when active
+		if m.showClarification {
+			var cmd tea.Cmd
+			m.clarModal, cmd = m.clarModal.Update(msg)
+			return m, cmd
 		}
 
 		// Don't process input keys while agent is busy
@@ -213,6 +233,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	if m.quitting {
 		return ""
+	}
+
+	// Show clarification modal instead of normal UI
+	if m.showClarification {
+		return m.clarModal.View() + "\n"
 	}
 
 	var sb strings.Builder
@@ -361,13 +386,18 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 	if msg.done {
 		m.agentBusy = false
 		m.agentCancel = nil
-		cmds = append(cmds, m.textarea.Focus())
 
-		// Display pending clarification
+		// Display pending clarification — use interactive modal
 		if m.state.PendingClarification != nil {
-			cmds = append(cmds, tea.Println(RenderClarification(m.state.PendingClarification)))
-			m.state.PendingClarification = nil
+			ensureAllQuestionsHaveOptions(m.state.PendingClarification)
+			m.showClarification = true
+			m.clarModal = newClarificationModal(m.state.PendingClarification, m.width)
+			// Don't focus textarea — modal handles input
+			m.updatePrompt()
+			return m, tea.Batch(cmds...)
 		}
+
+		cmds = append(cmds, m.textarea.Focus())
 
 		// Display pending plan
 		if m.state.HasPendingPlan() {
@@ -439,6 +469,34 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 	}
 
 	cmds = append(cmds, waitForAgent(m.eventCh))
+	return m, tea.Batch(cmds...)
+}
+
+// handleClarificationAnswer processes submitted answers from the modal.
+func (m model) handleClarificationAnswer(msg clarificationAnswerMsg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
+	c := m.state.PendingClarification
+	m.showClarification = false
+	m.state.PendingClarification = nil
+
+	// Format answers and send to agent
+	answerText := formatClarificationAnswers(c, msg.answers)
+	cmds = append(cmds, tea.Println(answerText))
+	cmd := m.startAgent(answerText)
+	cmds = append(cmds, cmd)
+	return m, tea.Batch(cmds...)
+}
+
+// handleClarificationCancel dismisses the modal without sending answers.
+func (m model) handleClarificationCancel() (tea.Model, tea.Cmd) {
+	m.showClarification = false
+	m.state.PendingClarification = nil
+	cmds := []tea.Cmd{
+		m.textarea.Focus(),
+		tea.Println("Clarification cancelled."),
+	}
+	m.updatePrompt()
 	return m, tea.Batch(cmds...)
 }
 
