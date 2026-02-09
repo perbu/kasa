@@ -38,12 +38,6 @@ func (r *REPL) Run(ctx context.Context) error {
 
 	m := newModel(r.runner, r.debug)
 	p := tea.NewProgram(m, tea.WithContext(ctx))
-
-	// Store program reference so the model can call Println.
-	// m.program is a *programRef (shared pointer), so this propagates
-	// to the copy held inside the tea.Program.
-	m.program.p = p
-
 	_, err := p.Run()
 	return err
 }

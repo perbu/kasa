@@ -24,18 +24,6 @@ type agentEventMsg struct {
 	done  bool // true when the agent stream has ended
 }
 
-// programRef holds a reference to the tea.Program, set after creation.
-// This allows the model (passed by value) to access the program for Println.
-type programRef struct {
-	p *tea.Program
-}
-
-func (r *programRef) Println(args ...interface{}) {
-	if r != nil && r.p != nil {
-		r.p.Println(args...)
-	}
-}
-
 // model is the bubbletea Model for the interactive REPL.
 type model struct {
 	textarea textarea.Model
@@ -46,7 +34,6 @@ type model struct {
 	runner     *runner.Runner
 	debug      bool
 	mdRenderer *glamour.TermRenderer
-	program    *programRef // shared pointer, set after program creation
 
 	// agent execution state
 	agentBusy   bool
@@ -118,7 +105,6 @@ func newModel(r *runner.Runner, debug bool) model {
 		runner:     r,
 		debug:      debug,
 		mdRenderer: md,
-		program:    &programRef{}, // populated after tea.NewProgram
 		eventCh:    make(chan agentEventMsg, 64),
 	}
 }
@@ -251,6 +237,8 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	var cmds []tea.Cmd
+
 	// Add to history and reset
 	m.history.Add(input)
 	m.history.ResetCursor()
@@ -261,18 +249,15 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 	m.textarea.SetHeight(1)
 
 	// Echo the user input above
-	if m.program != nil {
-		m.program.Println("> " + input)
-	}
+	cmds = append(cmds, tea.Println("> "+input))
 
 	// Handle exit/quit
 	if input == "exit" || input == "quit" {
 		m.history.Save()
-		if m.program != nil {
-			m.program.Println("Goodbye!")
-		}
+		cmds = append(cmds, tea.Println("Goodbye!"))
 		m.quitting = true
-		return m, tea.Quit
+		cmds = append(cmds, tea.Quit)
+		return m, tea.Batch(cmds...)
 	}
 
 	// Handle plan approval commands
@@ -280,50 +265,44 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 	case "yes", "y", "/approve":
 		if m.state.HasPendingPlan() {
 			plan := m.state.ApprovePlan()
-			if m.program != nil {
-				m.program.Println("Plan approved. Executing...")
-			}
+			cmds = append(cmds, tea.Println("Plan approved. Executing..."))
 			execPrompt := FormatExecutionPrompt(plan)
-			return m, m.startAgent(execPrompt)
+			cmd := m.startAgent(execPrompt)
+			cmds = append(cmds, cmd)
+			return m, tea.Batch(cmds...)
 		}
-		if m.program != nil {
-			m.program.Println("No pending plan to approve.")
-		}
-		return m, nil
+		cmds = append(cmds, tea.Println("No pending plan to approve."))
+		return m, tea.Batch(cmds...)
 
 	case "no", "n", "/reject":
 		if m.state.HasPendingPlan() {
 			m.state.RejectPlan()
-			if m.program != nil {
-				m.program.Println("Plan rejected.")
-			}
+			cmds = append(cmds, tea.Println("Plan rejected."))
 			m.updatePrompt()
-		} else if m.program != nil {
-			m.program.Println("No pending plan to reject.")
+		} else {
+			cmds = append(cmds, tea.Println("No pending plan to reject."))
 		}
-		return m, nil
+		return m, tea.Batch(cmds...)
 
 	case "/plan":
 		if m.state.HasPendingPlan() {
-			if m.program != nil {
-				m.program.Println(RenderPlan(m.state.PendingPlan))
-			}
-		} else if m.program != nil {
-			m.program.Println("No pending plan.")
+			cmds = append(cmds, tea.Println(RenderPlan(m.state.PendingPlan)))
+		} else {
+			cmds = append(cmds, tea.Println("No pending plan."))
 		}
-		return m, nil
+		return m, tea.Batch(cmds...)
 	}
 
 	// If there's a pending plan, warn
 	if m.state.HasPendingPlan() {
-		if m.program != nil {
-			m.program.Println("You have a pending plan. Type 'yes' to approve, 'no' to reject, or '/plan' to review.")
-		}
-		return m, nil
+		cmds = append(cmds, tea.Println("You have a pending plan. Type 'yes' to approve, 'no' to reject, or '/plan' to review."))
+		return m, tea.Batch(cmds...)
 	}
 
 	// Regular message: send to agent
-	return m, m.startAgent(input)
+	cmd := m.startAgent(input)
+	cmds = append(cmds, cmd)
+	return m, tea.Batch(cmds...)
 }
 
 // startAgent launches the agent in a goroutine and returns a Cmd to wait for events.
@@ -356,7 +335,7 @@ func (m *model) startAgent(prompt string) tea.Cmd {
 		}
 	}()
 
-	return waitForAgent(ch)
+	return tea.Batch(waitForAgent(ch), m.spinner.Tick)
 }
 
 // waitForAgent returns a Cmd that reads one event from the channel.
@@ -368,35 +347,31 @@ func waitForAgent(ch chan agentEventMsg) tea.Cmd {
 
 // handleAgentEvent processes a single event from the agent.
 func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
 	if msg.err != nil {
 		m.agentBusy = false
 		m.agentCancel = nil
-		focusCmd := m.textarea.Focus()
+		cmds = append(cmds, m.textarea.Focus())
 		m.updatePrompt()
-		if m.program != nil {
-			m.program.Println(fmt.Sprintf("Error: %v", msg.err))
-		}
-		return m, focusCmd
+		cmds = append(cmds, tea.Println(fmt.Sprintf("Error: %v", msg.err)))
+		return m, tea.Batch(cmds...)
 	}
 
 	if msg.done {
 		m.agentBusy = false
 		m.agentCancel = nil
-		focusCmd := m.textarea.Focus()
+		cmds = append(cmds, m.textarea.Focus())
 
 		// Display pending clarification
 		if m.state.PendingClarification != nil {
-			if m.program != nil {
-				m.program.Println(RenderClarification(m.state.PendingClarification))
-			}
+			cmds = append(cmds, tea.Println(RenderClarification(m.state.PendingClarification)))
 			m.state.PendingClarification = nil
 		}
 
 		// Display pending plan
 		if m.state.HasPendingPlan() {
-			if m.program != nil {
-				m.program.Println(RenderPlan(m.state.PendingPlan))
-			}
+			cmds = append(cmds, tea.Println(RenderPlan(m.state.PendingPlan)))
 		}
 
 		// After plan execution, reset if no new plan was proposed
@@ -405,7 +380,7 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 		}
 
 		m.updatePrompt()
-		return m, focusCmd
+		return m, tea.Batch(cmds...)
 	}
 
 	event := msg.event
@@ -457,15 +432,14 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 
 			// Print text output
 			if part.Text != "" {
-				if m.program != nil {
-					rendered := m.renderMarkdown(part.Text)
-					m.program.Println(rendered)
-				}
+				rendered := m.renderMarkdown(part.Text)
+				cmds = append(cmds, tea.Println(rendered))
 			}
 		}
 	}
 
-	return m, waitForAgent(m.eventCh)
+	cmds = append(cmds, waitForAgent(m.eventCh))
+	return m, tea.Batch(cmds...)
 }
 
 // renderMarkdown renders text through glamour, falling back to plain text.
