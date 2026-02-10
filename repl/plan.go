@@ -87,7 +87,7 @@ func buildPlanMarkdown(plan *Plan) string {
 	}
 
 	md.WriteString("---\n\n")
-	md.WriteString("**Commands:** `yes` approve · `no` reject · `/plan` show again\n")
+	md.WriteString("**Commands:** `EXECUTE` approve · `ABORT` reject · `/plan` show again\n")
 	return md.String()
 }
 

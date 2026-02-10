@@ -243,6 +243,16 @@ func CompareManifest(ctx context.Context, dynClient dynamic.Interface, namespace
 		return result
 	}
 
+	// Extract actual resource name from metadata.name — the passed-in name
+	// may be a directory/app name that differs from the actual resource name.
+	resourceName := name
+	if metadata, ok := storedMap["metadata"].(map[string]any); ok {
+		if metaName, ok := metadata["name"].(string); ok && metaName != "" {
+			resourceName = metaName
+		}
+	}
+	result.Name = resourceName
+
 	// Extract apiVersion from stored manifest for GVR resolution
 	apiVersion, _ := storedMap["apiVersion"].(string)
 
@@ -254,7 +264,7 @@ func CompareManifest(ctx context.Context, dynClient dynamic.Interface, namespace
 	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	liveMap, err := FetchAndCleanLiveResource(timeoutCtx, dynClient, namespace, name, kind, apiVersion)
+	liveMap, err := FetchAndCleanLiveResource(timeoutCtx, dynClient, namespace, resourceName, kind, apiVersion)
 	if err != nil {
 		errStr := err.Error()
 		if strings.Contains(errStr, "not found") {

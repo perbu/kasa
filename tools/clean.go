@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding/base64"
 	"strings"
 )
 
@@ -37,6 +38,24 @@ func cleanForImport(resource map[string]any) {
 
 	// Remove entire status section
 	delete(resource, "status")
+
+	// Normalize Secret stringData → data (Kubernetes converts stringData to
+	// base64-encoded data and drops stringData from the live object).
+	if kind, _ := resource["kind"].(string); strings.EqualFold(kind, "Secret") {
+		if stringData, ok := resource["stringData"].(map[string]any); ok {
+			data, _ := resource["data"].(map[string]any)
+			if data == nil {
+				data = make(map[string]any)
+			}
+			for k, v := range stringData {
+				if s, ok := v.(string); ok {
+					data[k] = base64.StdEncoding.EncodeToString([]byte(s))
+				}
+			}
+			resource["data"] = data
+			delete(resource, "stringData")
+		}
+	}
 
 	// Clean service-specific fields
 	if spec, ok := resource["spec"].(map[string]any); ok {

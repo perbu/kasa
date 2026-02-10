@@ -44,7 +44,7 @@ Kasa operates in **Safe Mode** by default in interactive REPL. Mutating operatio
 2. Agent gathers information using read-only tools
 3. Agent calls `propose_plan` with description and actions
 4. REPL detects the plan and displays it for review
-5. User types `yes` to approve or `no` to reject
+5. User types `EXECUTE` to approve or `ABORT` to reject
 6. If approved, agent executes the planned actions
 
 ### Tool Categories
@@ -65,8 +65,8 @@ Tools are classified in `tools/tools.go`:
 
 ### REPL Commands
 
-- `yes` / `y` / `/approve` - Approve pending plan
-- `no` / `n` / `/reject` - Reject pending plan
+- `EXECUTE` / `/approve` - Approve pending plan
+- `ABORT` / `/reject` - Reject pending plan
 - `/plan` - Display pending plan again
 
 ### Key Files

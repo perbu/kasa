@@ -134,7 +134,7 @@ func (r *REPL) PrintWelcome(version, model string, toolCount int, deploymentsDir
 | Tools | %d |
 | Deployments folder | %s |
 
-Commands: **yes**/**no** to approve/reject plans, **exit** to quit.
+Commands: **EXECUTE**/**ABORT** to approve/reject plans, **exit** to quit.
 `, version, model, toolCount, deploymentsDir)
 
 	renderer, err := setupMarkdownRenderer()

@@ -93,6 +93,10 @@ func (k *KubeTools) All() []tool.Tool {
 		NewSearchWebTool(k.tavilyAPIKey),
 		// HTTP verification tool
 		NewHTTPRequestTool(),
+		// Helm inspection tools
+		NewListHelmReleasesTool(k.clientset),
+		NewGetHelmReleaseTool(k.clientset),
+		NewGetHelmValuesTool(k.clientset),
 	}
 }
 

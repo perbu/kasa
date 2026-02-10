@@ -130,9 +130,13 @@ func (t *HTTPRequestTool) Run(ctx tool.Context, args any) (map[string]any, error
 		return map[string]any{"error": fmt.Sprintf("failed to create request: %v", err)}, nil
 	}
 
-	// Set headers
+	// Set headers (Host must be set on req.Host, not req.Header)
 	for k, v := range headers {
-		req.Header.Set(k, v)
+		if strings.EqualFold(k, "host") {
+			req.Host = v
+		} else {
+			req.Header.Set(k, v)
+		}
 	}
 
 	// Set a reasonable User-Agent

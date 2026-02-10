@@ -64,14 +64,17 @@ type model struct {
 // statusStyle is the dim style for the status line.
 var statusStyle = lipgloss.NewStyle().Faint(true)
 
+// separatorStyle is the dim style for the horizontal rule between turns.
+var separatorStyle = lipgloss.NewStyle().Faint(true)
+
 func newModel(r *runner.Runner, debug bool) model {
 	ta := textarea.New()
 	ta.Placeholder = "Type a message..."
 	ta.Prompt = "> "
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0
-	ta.SetHeight(1)
-	ta.MaxHeight = 10
+	ta.SetHeight(5)
+	ta.MaxHeight = 5
 
 	// Clear background colors so the textarea blends with the terminal.
 	ta.FocusedStyle.Base = lipgloss.NewStyle()
@@ -175,6 +178,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			return m.handleSubmit()
 
+		case "esc":
+			m.textarea.Reset()
+			m.savedInput = ""
+			m.history.ResetCursor()
+			return m, nil
+
 		case "up":
 			// If cursor is on first line, navigate history
 			if m.textarea.Line() == 0 {
@@ -186,8 +195,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.textarea.SetValue(entry)
 					m.textarea.CursorEnd()
-					// Resize textarea for multi-line entries
-					m.resizeTextarea()
 				}
 				return m, nil
 			}
@@ -203,7 +210,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.savedInput = ""
 				}
 				m.textarea.CursorEnd()
-				m.resizeTextarea()
 				return m, nil
 			}
 		}
@@ -212,7 +218,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.textarea, cmd = m.textarea.Update(msg)
 		cmds = append(cmds, cmd)
-		m.resizeTextarea()
 		return m, tea.Batch(cmds...)
 
 	case spinner.TickMsg:
@@ -271,7 +276,10 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 
 	// Clear textarea
 	m.textarea.Reset()
-	m.textarea.SetHeight(1)
+
+	// Separator line between conversation turns
+	sep := separatorStyle.Render(strings.Repeat("─", m.separatorWidth()))
+	cmds = append(cmds, tea.Println(sep))
 
 	// Echo the user input above
 	cmds = append(cmds, tea.Println("> "+input))
@@ -287,7 +295,7 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 
 	// Handle plan approval commands
 	switch strings.ToLower(input) {
-	case "yes", "y", "/approve":
+	case "execute", "/approve":
 		if m.state.HasPendingPlan() {
 			plan := m.state.ApprovePlan()
 			cmds = append(cmds, tea.Println("Plan approved. Executing..."))
@@ -299,7 +307,7 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 		cmds = append(cmds, tea.Println("No pending plan to approve."))
 		return m, tea.Batch(cmds...)
 
-	case "no", "n", "/reject":
+	case "abort", "/reject":
 		if m.state.HasPendingPlan() {
 			m.state.RejectPlan()
 			cmds = append(cmds, tea.Println("Plan rejected."))
@@ -320,7 +328,7 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 
 	// If there's a pending plan, warn
 	if m.state.HasPendingPlan() {
-		cmds = append(cmds, tea.Println("You have a pending plan. Type 'yes' to approve, 'no' to reject, or '/plan' to review."))
+		cmds = append(cmds, tea.Println("You have a pending plan. Type EXECUTE to approve, ABORT to reject, or /plan to review."))
 		return m, tea.Batch(cmds...)
 	}
 
@@ -540,29 +548,18 @@ func (m *model) buildStatusLine() string {
 	return status
 }
 
-// resizeTextarea adjusts textarea height based on content lines.
-func (m *model) resizeTextarea() {
-	lines := m.textarea.LineCount()
-	if lines < 1 {
-		lines = 1
-	}
-	maxHeight := 10
-	if m.height > 0 {
-		maxHeight = min(10, m.height/3)
-	}
-	if lines > maxHeight {
-		lines = maxHeight
-	}
-	m.textarea.SetHeight(lines)
-}
-
 // updatePrompt sets the textarea prompt based on session state.
 func (m *model) updatePrompt() {
-	if m.state.HasPendingPlan() {
-		m.textarea.Prompt = "approve> "
-	} else {
-		m.textarea.Prompt = "> "
+	m.textarea.Prompt = "> "
+}
+
+// separatorWidth returns the width for the horizontal separator line.
+func (m model) separatorWidth() int {
+	w := m.width
+	if w <= 0 {
+		w = 80
 	}
+	return w
 }
 
 // extractReason gets the "reason" field from tool call args.
