@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/glamour"
-	"github.com/joho/godotenv"
 	"github.com/perbu/kasa/manifest"
 	"github.com/perbu/kasa/repl"
 	"github.com/perbu/kasa/tools"
@@ -30,20 +29,22 @@ import (
 //go:embed .version
 var version string
 
+//go:embed config.yaml.example
+var exampleConfig []byte
+
 func main() {
 	prompt := flag.String("prompt", "", "Run a single prompt and exit (non-interactive mode)")
 	debug := flag.Bool("debug", false, "Enable debug output")
 	noTools := flag.Bool("no-tools", false, "Run without tools (for testing)")
 	flag.Parse()
 
-	// Load .env file (optional, won't error if missing)
-	if err := godotenv.Load(); err != nil {
-		if *debug {
-			log.Printf("No .env file found, using environment variables")
-		}
+	// Handle "init" subcommand
+	if flag.Arg(0) == "init" {
+		runInit()
+		return
 	}
 
-	cfg, err := loadConfig("config.yaml")
+	cfg, err := loadConfig()
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
@@ -55,11 +56,7 @@ func main() {
 	}
 
 	// Initialize manifest manager
-	manifestDir := cfg.Deployments.Directory
-	if manifestDir == "" {
-		manifestDir = "~/.kasa/deployments"
-	}
-	manifestMgr, err := manifest.NewManager(manifestDir)
+	manifestMgr, err := manifest.NewManager(cfg.Deployments.Directory)
 	if err != nil {
 		log.Fatalf("Failed to initialize manifest manager: %v", err)
 	}
@@ -80,16 +77,16 @@ func main() {
 	}
 
 	// Get API keys for web tools (optional)
-	jinaAPIKey := os.Getenv("JINA_READER_API_KEY")
-	tavilyAPIKey := os.Getenv("TAVILY_API_KEY")
+	jinaAPIKey := cfg.JinaAPIKey()
+	tavilyAPIKey := cfg.TavilyAPIKey()
 
 	// Initialize tools
 	kubeTools := tools.NewKubeTools(clientset, dynamicClient, manifestMgr, jinaAPIKey, tavilyAPIKey)
 
-	// Get API key from environment
-	apiKey := os.Getenv("GOOGLE_API_KEY")
+	// Get Google API key
+	apiKey := cfg.GoogleAPIKey()
 	if apiKey == "" {
-		log.Fatalf("GOOGLE_API_KEY environment variable not set")
+		log.Fatalf("Google API key not configured. Set GOOGLE_API_KEY env var or google_api_key in ~/.kasa/config.yaml")
 	}
 
 	ctx := context.Background()
@@ -192,6 +189,28 @@ func main() {
 	if err := replInstance.Run(ctx); err != nil {
 		log.Fatalf("REPL error: %v", err)
 	}
+}
+
+// runInit creates ~/.kasa/config.yaml from the embedded example config.
+func runInit() {
+	dir, err := configDir()
+	if err != nil {
+		log.Fatalf("Failed to determine config directory: %v", err)
+	}
+
+	path := filepath.Join(dir, "config.yaml")
+	if _, err := os.Stat(path); err == nil {
+		fmt.Printf("Config file already exists: %s\n", path)
+		fmt.Println("Remove it first if you want to reinitialize.")
+		os.Exit(1)
+	}
+
+	if err := os.WriteFile(path, exampleConfig, 0644); err != nil {
+		log.Fatalf("Failed to write config file: %v", err)
+	}
+
+	fmt.Printf("Created config file: %s\n", path)
+	fmt.Println("Edit it to add your Google API key and customize settings.")
 }
 
 // initKubeClient initializes a Kubernetes clientset and dynamic client.

@@ -171,6 +171,6 @@ func FormatExecutionPrompt(plan *Plan) string {
 		sb.WriteString(fmt.Sprintf("(Reason: %s)\n", action.Reason))
 	}
 
-	sb.WriteString("\nExecute these actions in order. Do not call propose_plan again - proceed directly with the mutating tools.")
+	sb.WriteString("\nExecute these actions in order. Proceed directly with the mutating tools. If any action fails and you need to retry with different parameters, call propose_plan again with a revised plan.")
 	return sb.String()
 }

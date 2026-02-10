@@ -1,0 +1,36 @@
+# Kasa configuration
+# Location: ~/.kasa/config.yaml
+
+kubernetes:
+  # Path to kubeconfig file (empty = default ~/.kube/config)
+  kubeconfig: ""
+  # Kubernetes context to use (empty = current context)
+  context: ""
+
+agent:
+  # Gemini model to use (default: gemini-3-flash-preview)
+  model: gemini-3-flash-preview
+  # Agent name (default: kasa)
+  name: kasa
+
+deployments:
+  # Directory where manifests are stored (supports ~ for home directory)
+  # Default: ~/.kasa/deployments
+  directory: ""
+  # Git remote URL for team sync (e.g., git@github.com:org/manifests.git)
+  # remote: ""
+
+# API credentials
+# Environment variables take precedence over these values.
+credentials:
+  # Required: Google API key for Gemini (or set GOOGLE_API_KEY env var)
+  google_api_key: ""
+  # Optional: Jina Reader API key for web fetching (or set JINA_READER_API_KEY env var)
+  jina_api_key: ""
+  # Optional: Tavily API key for web search (or set TAVILY_API_KEY env var)
+  tavily_api_key: ""
+
+# Prompts for tuning (leave empty for built-in defaults)
+# prompts:
+#   system: |
+#     Your custom system prompt here...

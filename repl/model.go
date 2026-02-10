@@ -389,7 +389,6 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 
 		// Display pending clarification — use interactive modal
 		if m.state.PendingClarification != nil {
-			ensureAllQuestionsHaveOptions(m.state.PendingClarification)
 			m.showClarification = true
 			m.clarModal = newClarificationModal(m.state.PendingClarification, m.width)
 			// Don't focus textarea — modal handles input

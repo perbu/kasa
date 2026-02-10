@@ -8,7 +8,6 @@ require (
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/charmbracelet/x/ansi v0.11.5
-	github.com/joho/godotenv v1.5.1
 	golang.org/x/term v0.37.0
 	google.golang.org/adk v0.3.0
 	google.golang.org/genai v1.42.0

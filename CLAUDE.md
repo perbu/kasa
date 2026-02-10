@@ -18,8 +18,9 @@ go run . -debug -prompt "..."      # With debug output
 
 ## Configuration
 
-- `.env` - Contains api keys
-- `config.yaml` - Kubernetes settings, model selection, and system prompt
+- `~/.kasa/config.yaml` - All settings: Kubernetes, model, API keys, system prompt
+- Run `kasa init` to create a default config file
+- Environment variables (`GOOGLE_API_KEY`, `JINA_READER_API_KEY`, `TAVILY_API_KEY`) override config file values
 
 ## Project Structure
 
@@ -262,7 +263,6 @@ manager.Commit("Deploy nginx to default namespace")
 - `google.golang.org/genai` - Gemini API client and types
 - `k8s.io/client-go` - Kubernetes typed client and dynamic client
 - `k8s.io/apimachinery` - Kubernetes API types and unstructured objects
-- `github.com/joho/godotenv` - .env loading
 - `gopkg.in/yaml.v3` - Config parsing
 - `sigs.k8s.io/yaml` - YAML/JSON conversion for Kubernetes objects
 
@@ -270,4 +270,4 @@ manager.Commit("Deploy nginx to default namespace")
 
 Requires:
 - Valid kubeconfig at `~/.kube/config`
-- `GOOGLE_API_KEY` set in `.env` or environment
+- `GOOGLE_API_KEY` set in `~/.kasa/config.yaml` or as environment variable

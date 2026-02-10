@@ -59,16 +59,6 @@ func buildClarificationMarkdown(c *Clarification) string {
 	return md.String()
 }
 
-// ensureAllQuestionsHaveOptions adds default "Yes"/"No" options to any question
-// that lacks explicit options, so the interactive modal can always be used.
-func ensureAllQuestionsHaveOptions(c *Clarification) {
-	for i := range c.Questions {
-		if len(c.Questions[i].Options) == 0 {
-			c.Questions[i].Options = []string{"Yes", "No"}
-		}
-	}
-}
-
 // formatClarificationAnswers formats selected answers as a numbered list for the agent.
 func formatClarificationAnswers(c *Clarification, answers []string) string {
 	var sb strings.Builder

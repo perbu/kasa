@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -16,32 +17,61 @@ type clarificationAnswerMsg struct {
 // clarificationCancelMsg is sent when the user cancels the modal.
 type clarificationCancelMsg struct{}
 
-// clarificationModal is a bubbletea sub-component for interactive clarification selection.
+// clarificationModal is a bubbletea sub-component for interactive clarification.
+// Questions with predefined options use radio-button selection.
+// Questions without options use a text input field.
 type clarificationModal struct {
 	clarification *Clarification
-	cursor        int      // flat index across all options + submit row
-	selected      []int    // per-question selected option index, -1 = unanswered
-	width         int
+	cursor        int   // flat index across all interactive rows + submit
+	selected      []int // per-question selected option index (-1 = unanswered); unused for text questions
+
+	textInputs []textinput.Model // one per question; only initialised for text questions
+	width      int
 }
 
 func newClarificationModal(c *Clarification, width int) clarificationModal {
 	selected := make([]int, len(c.Questions))
-	for i := range selected {
+	textInputs := make([]textinput.Model, len(c.Questions))
+
+	for i, q := range c.Questions {
 		selected[i] = -1
+		if len(q.Options) == 0 {
+			ti := textinput.New()
+			ti.Placeholder = "Type your answer..."
+			ti.CharLimit = 256
+			ti.Width = 50
+			textInputs[i] = ti
+		}
 	}
+
+	// Focus the first text input if the first question is a text question
+	if len(c.Questions) > 0 && len(c.Questions[0].Options) == 0 {
+		textInputs[0].Focus()
+	}
+
 	return clarificationModal{
 		clarification: c,
 		cursor:        0,
 		selected:      selected,
+		textInputs:    textInputs,
 		width:         width,
 	}
 }
 
-// totalRows returns the total number of selectable rows (all options + submit if all answered).
+// isTextQuestion returns true if the question has no predefined options.
+func (m *clarificationModal) isTextQuestion(qi int) bool {
+	return len(m.clarification.Questions[qi].Options) == 0
+}
+
+// totalRows returns the total number of interactive rows (options + text inputs + submit).
 func (m *clarificationModal) totalRows() int {
 	n := 0
-	for _, q := range m.clarification.Questions {
-		n += len(q.Options)
+	for qi, q := range m.clarification.Questions {
+		if m.isTextQuestion(qi) {
+			n++ // one row for the text input
+		} else {
+			n += len(q.Options)
+		}
 	}
 	if m.allAnswered() {
 		n++ // submit row
@@ -50,48 +80,62 @@ func (m *clarificationModal) totalRows() int {
 }
 
 // cursorToQuestionOption maps a flat cursor index to (question index, option index).
+// For text questions, option index is -1.
 // Returns (-1, -1) if the cursor is on the submit row.
 func (m *clarificationModal) cursorToQuestionOption() (int, int) {
 	pos := 0
 	for qi, q := range m.clarification.Questions {
-		for oi := range q.Options {
+		if m.isTextQuestion(qi) {
 			if pos == m.cursor {
-				return qi, oi
+				return qi, -1
 			}
 			pos++
+		} else {
+			for oi := range q.Options {
+				if pos == m.cursor {
+					return qi, oi
+				}
+				pos++
+			}
 		}
 	}
 	return -1, -1 // submit row
 }
 
-// allAnswered returns true if every question has a selected answer.
+// allAnswered returns true if every question has been answered.
 func (m *clarificationModal) allAnswered() bool {
-	for _, s := range m.selected {
-		if s < 0 {
-			return false
+	for qi := range m.clarification.Questions {
+		if m.isTextQuestion(qi) {
+			if strings.TrimSpace(m.textInputs[qi].Value()) == "" {
+				return false
+			}
+		} else {
+			if m.selected[qi] < 0 {
+				return false
+			}
 		}
 	}
 	return true
 }
 
-// buildAnswers returns the selected option text for each question.
+// buildAnswers returns the answer text for each question.
 func (m *clarificationModal) buildAnswers() []string {
 	answers := make([]string, len(m.clarification.Questions))
-	for i, q := range m.clarification.Questions {
-		if m.selected[i] >= 0 && m.selected[i] < len(q.Options) {
-			answers[i] = q.Options[m.selected[i]]
+	for qi, q := range m.clarification.Questions {
+		if m.isTextQuestion(qi) {
+			answers[qi] = strings.TrimSpace(m.textInputs[qi].Value())
+		} else if m.selected[qi] >= 0 && m.selected[qi] < len(q.Options) {
+			answers[qi] = q.Options[m.selected[qi]]
 		}
 	}
 	return answers
 }
 
-// advanceToNextUnanswered moves the cursor to the first option of the next unanswered question.
+// advanceToNextUnanswered moves the cursor to the next unanswered question.
 func (m *clarificationModal) advanceToNextUnanswered() {
-	// Find next unanswered question after current
 	qi, _ := m.cursorToQuestionOption()
 	startQ := max(qi+1, 0)
 
-	// Search from startQ to end, then wrap around
 	for pass := range 2 {
 		from := startQ
 		if pass == 1 {
@@ -102,26 +146,62 @@ func (m *clarificationModal) advanceToNextUnanswered() {
 			to = startQ
 		}
 		for i := from; i < to; i++ {
-			if m.selected[i] < 0 {
-				m.cursor = m.questionFirstOption(i)
-				return
+			if m.isTextQuestion(i) {
+				if strings.TrimSpace(m.textInputs[i].Value()) == "" {
+					m.cursor = m.questionFirstRow(i)
+					m.focusTextInput(i)
+					return
+				}
+			} else {
+				if m.selected[i] < 0 {
+					m.cursor = m.questionFirstRow(i)
+					m.blurAllTextInputs()
+					return
+				}
 			}
 		}
 	}
 
 	// All answered — move to submit row
+	m.blurAllTextInputs()
 	if m.allAnswered() {
 		m.cursor = m.totalRows() - 1
 	}
 }
 
-// questionFirstOption returns the flat cursor index for the first option of question qi.
-func (m *clarificationModal) questionFirstOption(qi int) int {
+// questionFirstRow returns the flat cursor index for the first row of question qi.
+func (m *clarificationModal) questionFirstRow(qi int) int {
 	pos := 0
 	for i := range qi {
-		pos += len(m.clarification.Questions[i].Options)
+		if m.isTextQuestion(i) {
+			pos++
+		} else {
+			pos += len(m.clarification.Questions[i].Options)
+		}
 	}
 	return pos
+}
+
+// focusTextInput focuses the text input for question qi and blurs all others.
+func (m *clarificationModal) focusTextInput(qi int) {
+	for i := range m.textInputs {
+		if m.isTextQuestion(i) {
+			if i == qi {
+				m.textInputs[i].Focus()
+			} else {
+				m.textInputs[i].Blur()
+			}
+		}
+	}
+}
+
+// blurAllTextInputs blurs all text inputs.
+func (m *clarificationModal) blurAllTextInputs() {
+	for i := range m.textInputs {
+		if m.isTextQuestion(i) {
+			m.textInputs[i].Blur()
+		}
+	}
 }
 
 // Update handles key messages for the modal.
@@ -129,21 +209,46 @@ func (m clarificationModal) Update(msg tea.Msg) (clarificationModal, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "up", "k":
+		case "esc":
+			return m, func() tea.Msg {
+				return clarificationCancelMsg{}
+			}
+		case "up", "shift+tab":
 			if m.cursor > 0 {
 				m.cursor--
 			}
-		case "down", "j":
-			max := m.totalRows() - 1
-			if m.cursor < max {
+			qi, _ := m.cursorToQuestionOption()
+			if qi >= 0 && m.isTextQuestion(qi) {
+				m.focusTextInput(qi)
+			} else {
+				m.blurAllTextInputs()
+			}
+			return m, nil
+		case "down", "tab":
+			maxRow := m.totalRows() - 1
+			if m.cursor < maxRow {
 				m.cursor++
 			}
-		case "enter", " ":
+			qi, _ := m.cursorToQuestionOption()
+			if qi >= 0 && m.isTextQuestion(qi) {
+				m.focusTextInput(qi)
+			} else {
+				m.blurAllTextInputs()
+			}
+			return m, nil
+		case "enter":
 			qi, oi := m.cursorToQuestionOption()
 			if qi >= 0 {
-				// Select this option
-				m.selected[qi] = oi
-				m.advanceToNextUnanswered()
+				if m.isTextQuestion(qi) {
+					// Enter on a text input: advance if non-empty
+					if strings.TrimSpace(m.textInputs[qi].Value()) != "" {
+						m.advanceToNextUnanswered()
+					}
+				} else {
+					// Select this option
+					m.selected[qi] = oi
+					m.advanceToNextUnanswered()
+				}
 			} else {
 				// On submit row
 				if m.allAnswered() {
@@ -152,10 +257,23 @@ func (m clarificationModal) Update(msg tea.Msg) (clarificationModal, tea.Cmd) {
 					}
 				}
 			}
-		case "esc":
-			return m, func() tea.Msg {
-				return clarificationCancelMsg{}
+			return m, nil
+		case " ":
+			// Space selects options but types in text inputs
+			qi, oi := m.cursorToQuestionOption()
+			if qi >= 0 && !m.isTextQuestion(qi) {
+				m.selected[qi] = oi
+				m.advanceToNextUnanswered()
+				return m, nil
 			}
+		}
+
+		// Pass remaining keys to the focused text input
+		qi, _ := m.cursorToQuestionOption()
+		if qi >= 0 && m.isTextQuestion(qi) {
+			var cmd tea.Cmd
+			m.textInputs[qi], cmd = m.textInputs[qi].Update(msg)
+			return m, cmd
 		}
 	}
 	return m, nil
@@ -204,29 +322,43 @@ func (m clarificationModal) View() string {
 		sb.WriteString(modalQuestionStyle.Render(fmt.Sprintf("%d. %s", qi+1, q.Question)))
 		sb.WriteString("\n")
 
-		for oi, opt := range q.Options {
+		if m.isTextQuestion(qi) {
+			// Render text input
 			isCursor := pos == m.cursor
-			isSelected := m.selected[qi] == oi
-
-			var bullet string
-			if isSelected {
-				bullet = "●"
-			} else {
-				bullet = "○"
-			}
-
-			line := fmt.Sprintf("   %s %s", bullet, opt)
-
 			if isCursor {
-				line = " ▸" + line[2:]
-				sb.WriteString(modalCursorStyle.Render(line))
-			} else if isSelected {
-				sb.WriteString(modalSelectedStyle.Render(line))
+				sb.WriteString(" ▸ ")
 			} else {
-				sb.WriteString(line)
+				sb.WriteString("   ")
 			}
+			sb.WriteString(m.textInputs[qi].View())
 			sb.WriteString("\n")
 			pos++
+		} else {
+			// Render radio options
+			for oi, opt := range q.Options {
+				isCursor := pos == m.cursor
+				isSelected := m.selected[qi] == oi
+
+				var bullet string
+				if isSelected {
+					bullet = "●"
+				} else {
+					bullet = "○"
+				}
+
+				line := fmt.Sprintf("   %s %s", bullet, opt)
+
+				if isCursor {
+					line = " ▸" + line[2:]
+					sb.WriteString(modalCursorStyle.Render(line))
+				} else if isSelected {
+					sb.WriteString(modalSelectedStyle.Render(line))
+				} else {
+					sb.WriteString(line)
+				}
+				sb.WriteString("\n")
+				pos++
+			}
 		}
 		sb.WriteString("\n")
 	}
@@ -242,7 +374,7 @@ func (m clarificationModal) View() string {
 		sb.WriteString("\n\n")
 	}
 
-	sb.WriteString(modalHelpStyle.Render("↑↓ navigate · enter select · esc cancel"))
+	sb.WriteString(modalHelpStyle.Render("↑↓/tab navigate · enter select/confirm · esc cancel"))
 
 	boxWidth := max(m.width-4, 40)
 	if boxWidth > 80 {
