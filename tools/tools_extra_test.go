@@ -1232,6 +1232,556 @@ func TestUnstructuredNestedField(t *testing.T) {
 	})
 }
 
+// TestCleanForImport tests the cleanForImport function.
+func TestCleanForImport(t *testing.T) {
+	t.Run("removes runtime metadata", func(t *testing.T) {
+		resource := map[string]any{
+			"apiVersion": "apps/v1",
+			"kind":       "Deployment",
+			"metadata": map[string]any{
+				"name":              "test",
+				"namespace":         "default",
+				"uid":               "abc-123",
+				"resourceVersion":   "12345",
+				"generation":        float64(1),
+				"creationTimestamp": "2024-01-01T00:00:00Z",
+				"managedFields":     []any{},
+				"selfLink":          "/apis/apps/v1/...",
+			},
+			"status": map[string]any{
+				"replicas": float64(1),
+			},
+		}
+		cleanForImport(resource)
+
+		metadata := resource["metadata"].(map[string]any)
+		if _, ok := metadata["uid"]; ok {
+			t.Error("expected uid to be removed")
+		}
+		if _, ok := metadata["resourceVersion"]; ok {
+			t.Error("expected resourceVersion to be removed")
+		}
+		if _, ok := metadata["generation"]; ok {
+			t.Error("expected generation to be removed")
+		}
+		if _, ok := metadata["creationTimestamp"]; ok {
+			t.Error("expected creationTimestamp to be removed")
+		}
+		if _, ok := metadata["managedFields"]; ok {
+			t.Error("expected managedFields to be removed")
+		}
+		if _, ok := resource["status"]; ok {
+			t.Error("expected status to be removed")
+		}
+		// Name should be preserved
+		if metadata["name"] != "test" {
+			t.Error("name should be preserved")
+		}
+	})
+
+	t.Run("removes kubectl annotations", func(t *testing.T) {
+		resource := map[string]any{
+			"metadata": map[string]any{
+				"name": "test",
+				"annotations": map[string]any{
+					"kubectl.kubernetes.io/last-applied-configuration": "{}",
+					"deployment.kubernetes.io/revision":                "1",
+					"kubernetes.io/change-cause":                       "test",
+					"custom-annotation":                                "keep",
+				},
+			},
+		}
+		cleanForImport(resource)
+
+		metadata := resource["metadata"].(map[string]any)
+		annotations := metadata["annotations"].(map[string]any)
+		if _, ok := annotations["kubectl.kubernetes.io/last-applied-configuration"]; ok {
+			t.Error("expected kubectl annotation to be removed")
+		}
+		if _, ok := annotations["deployment.kubernetes.io/revision"]; ok {
+			t.Error("expected deployment revision annotation to be removed")
+		}
+		if _, ok := annotations["kubernetes.io/change-cause"]; ok {
+			t.Error("expected change-cause annotation to be removed")
+		}
+		if annotations["custom-annotation"] != "keep" {
+			t.Error("expected custom annotation to be preserved")
+		}
+	})
+
+	t.Run("removes empty annotations map", func(t *testing.T) {
+		resource := map[string]any{
+			"metadata": map[string]any{
+				"name": "test",
+				"annotations": map[string]any{
+					"kubectl.kubernetes.io/last-applied-configuration": "{}",
+				},
+			},
+		}
+		cleanForImport(resource)
+
+		metadata := resource["metadata"].(map[string]any)
+		if _, ok := metadata["annotations"]; ok {
+			t.Error("expected empty annotations map to be removed")
+		}
+	})
+
+	t.Run("converts Secret stringData to data", func(t *testing.T) {
+		resource := map[string]any{
+			"kind": "Secret",
+			"metadata": map[string]any{
+				"name": "test",
+			},
+			"stringData": map[string]any{
+				"password": "secret123",
+			},
+		}
+		cleanForImport(resource)
+
+		if _, ok := resource["stringData"]; ok {
+			t.Error("expected stringData to be removed")
+		}
+		data := resource["data"].(map[string]any)
+		if data["password"] != "c2VjcmV0MTIz" { // base64("secret123")
+			t.Errorf("expected base64 encoded data, got %v", data["password"])
+		}
+	})
+
+	t.Run("removes service clusterIP fields", func(t *testing.T) {
+		resource := map[string]any{
+			"kind": "Service",
+			"metadata": map[string]any{
+				"name": "test",
+			},
+			"spec": map[string]any{
+				"clusterIP":  "10.0.0.1",
+				"clusterIPs": []any{"10.0.0.1"},
+				"ports":      []any{map[string]any{"port": float64(80)}},
+			},
+		}
+		cleanForImport(resource)
+
+		spec := resource["spec"].(map[string]any)
+		if _, ok := spec["clusterIP"]; ok {
+			t.Error("expected clusterIP to be removed")
+		}
+		if _, ok := spec["clusterIPs"]; ok {
+			t.Error("expected clusterIPs to be removed")
+		}
+		// ports should be preserved
+		if spec["ports"] == nil {
+			t.Error("expected ports to be preserved")
+		}
+	})
+}
+
+// TestShouldRemoveAnnotation tests the shouldRemoveAnnotation function.
+func TestShouldRemoveAnnotation(t *testing.T) {
+	tests := []struct {
+		key    string
+		remove bool
+	}{
+		{"kubectl.kubernetes.io/last-applied-configuration", true},
+		{"kubectl.kubernetes.io/restartedAt", true},
+		{"deployment.kubernetes.io/revision", true},
+		{"kubernetes.io/change-cause", true},
+		{"custom-annotation", false},
+		{"app.kubernetes.io/name", false},
+		{"nginx.ingress.kubernetes.io/rewrite-target", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			got := shouldRemoveAnnotation(tt.key)
+			if got != tt.remove {
+				t.Errorf("shouldRemoveAnnotation(%q) = %v, want %v", tt.key, got, tt.remove)
+			}
+		})
+	}
+}
+
+// TestApplyResourceTool tests the apply_resource tool with dynamic client.
+func TestApplyResourceTool(t *testing.T) {
+	nsName := "test-apply-resource"
+	createTestNamespace(t, clientset, nsName)
+	mgr := newTestManifestManager(t)
+
+	tool := NewApplyResourceTool(dynamicClient, mgr)
+
+	t.Run("creates deployment from YAML", func(t *testing.T) {
+		yaml := `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ar-deploy
+  namespace: ` + nsName + `
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ar-deploy
+  template:
+    metadata:
+      labels:
+        app: ar-deploy
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.25
+`
+		result, err := tool.Run(nil, map[string]any{
+			"yaml": yaml,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result["success"] != true {
+			t.Errorf("expected success, got: %v", result)
+		}
+		if result["action"] != "created" {
+			t.Errorf("expected 'created', got %v", result["action"])
+		}
+		if result["kind"] != "Deployment" {
+			t.Errorf("expected kind 'Deployment', got %v", result["kind"])
+		}
+	})
+
+	t.Run("updates existing resource", func(t *testing.T) {
+		yaml := `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ar-cm
+  namespace: ` + nsName + `
+data:
+  key: value1
+`
+		// Create
+		_, _ = tool.Run(nil, map[string]any{"yaml": yaml})
+
+		// Update
+		yaml2 := `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ar-cm
+  namespace: ` + nsName + `
+data:
+  key: value2
+`
+		result, err := tool.Run(nil, map[string]any{"yaml": yaml2})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result["action"] != "updated" {
+			t.Errorf("expected 'updated', got %v", result["action"])
+		}
+	})
+
+	t.Run("dry run does not persist", func(t *testing.T) {
+		yaml := `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ar-dryrun
+  namespace: ` + nsName + `
+data:
+  key: value
+`
+		result, err := tool.Run(nil, map[string]any{
+			"yaml":    yaml,
+			"dry_run": true,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result["dry_run"] != true {
+			t.Error("expected dry_run=true")
+		}
+	})
+
+	t.Run("namespace override", func(t *testing.T) {
+		yaml := `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ar-ns-override
+data:
+  key: value
+`
+		result, err := tool.Run(nil, map[string]any{
+			"yaml":      yaml,
+			"namespace": nsName,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result["namespace"] != nsName {
+			t.Errorf("expected namespace %s, got %v", nsName, result["namespace"])
+		}
+	})
+
+	t.Run("validates yaml required", func(t *testing.T) {
+		result, _ := tool.Run(nil, map[string]any{})
+		if result["error"] != "yaml is required" {
+			t.Errorf("expected 'yaml is required', got: %v", result["error"])
+		}
+	})
+
+	t.Run("rejects invalid YAML", func(t *testing.T) {
+		result, _ := tool.Run(nil, map[string]any{
+			"yaml": "{{{invalid",
+		})
+		if _, ok := result["error"]; !ok {
+			t.Error("expected error for invalid YAML")
+		}
+	})
+
+	t.Run("rejects YAML without kind", func(t *testing.T) {
+		result, _ := tool.Run(nil, map[string]any{
+			"yaml": "apiVersion: v1\nmetadata:\n  name: test\n",
+		})
+		if result["error"] != "YAML must contain a 'kind' field" {
+			t.Errorf("expected 'kind' error, got: %v", result["error"])
+		}
+	})
+
+	t.Run("rejects YAML without name", func(t *testing.T) {
+		result, _ := tool.Run(nil, map[string]any{
+			"yaml": "apiVersion: v1\nkind: ConfigMap\ndata:\n  key: value\n",
+		})
+		if result["error"] != "YAML must contain metadata.name" {
+			t.Errorf("expected 'metadata.name' error, got: %v", result["error"])
+		}
+	})
+}
+
+// TestDiffResourceTool tests the diff_resource tool.
+func TestDiffResourceTool(t *testing.T) {
+	mgr := newTestManifestManager(t)
+	tool := NewDiffResourceTool(dynamicClient, mgr)
+
+	nsName := "test-diff-resource"
+	createTestNamespace(t, clientset, nsName)
+
+	t.Run("validates required parameters", func(t *testing.T) {
+		result, _ := tool.Run(nil, map[string]any{"app": "test", "type": "deployment"})
+		if result["error"] != "namespace is required" {
+			t.Errorf("expected namespace required, got: %v", result["error"])
+		}
+
+		result, _ = tool.Run(nil, map[string]any{"namespace": nsName, "type": "deployment"})
+		if result["error"] != "app is required" {
+			t.Errorf("expected app required, got: %v", result["error"])
+		}
+
+		result, _ = tool.Run(nil, map[string]any{"namespace": nsName, "app": "test"})
+		if result["error"] != "type is required" {
+			t.Errorf("expected type required, got: %v", result["error"])
+		}
+	})
+
+	t.Run("returns error for missing manifest", func(t *testing.T) {
+		result, err := tool.Run(nil, map[string]any{
+			"namespace": nsName,
+			"app":       "nonexistent",
+			"type":      "deployment",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if _, ok := result["error"]; !ok {
+			t.Error("expected error for missing manifest")
+		}
+	})
+
+	t.Run("detects missing cluster resource", func(t *testing.T) {
+		manifest := `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: diff-missing
+  namespace: ` + nsName + `
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: diff-missing
+  template:
+    metadata:
+      labels:
+        app: diff-missing
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.25
+`
+		writeTestManifest(t, mgr, nsName, "diff-missing", "deployment", manifest)
+
+		result, err := tool.Run(nil, map[string]any{
+			"namespace": nsName,
+			"app":       "diff-missing",
+			"type":      "deployment",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result["status"] != "missing" {
+			t.Errorf("expected status 'missing', got %v", result["status"])
+		}
+	})
+}
+
+// TestSyncManifestsTool tests the sync_manifests tool.
+func TestSyncManifestsTool(t *testing.T) {
+	mgr := newTestManifestManager(t)
+	tool := NewSyncManifestsTool(mgr)
+
+	t.Run("returns error when no remote configured", func(t *testing.T) {
+		result, err := tool.Run(nil, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result["success"] != false {
+			t.Error("expected failure when no remote")
+		}
+		if result["error"] != "no git remote configured" {
+			t.Errorf("expected 'no git remote configured', got: %v", result["error"])
+		}
+	})
+}
+
+// TestPushManifestsTool tests the push_manifests tool.
+func TestPushManifestsTool(t *testing.T) {
+	mgr := newTestManifestManager(t)
+	tool := NewPushManifestsTool(mgr)
+
+	t.Run("returns error when no remote configured", func(t *testing.T) {
+		result, err := tool.Run(nil, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result["success"] != false {
+			t.Error("expected failure when no remote")
+		}
+		if result["error"] != "no git remote configured" {
+			t.Errorf("expected 'no git remote configured', got: %v", result["error"])
+		}
+	})
+}
+
+// TestApplyManifestToolServicePath tests the apply_manifest service path.
+func TestApplyManifestToolServicePath(t *testing.T) {
+	nsName := "test-apply-svc"
+	createTestNamespace(t, clientset, nsName)
+	mgr := newTestManifestManager(t)
+
+	tool := NewApplyManifestTool(clientset, mgr)
+
+	t.Run("applies service manifest", func(t *testing.T) {
+		manifest := `apiVersion: v1
+kind: Service
+metadata:
+  name: apply-svc
+spec:
+  selector:
+    app: test
+  ports:
+  - port: 80
+    targetPort: 8080
+`
+		writeTestManifest(t, mgr, nsName, "apply-svc", "service", manifest)
+
+		result, err := tool.Run(nil, map[string]any{
+			"namespace": nsName,
+			"app":       "apply-svc",
+			"type":      "service",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result["success"] != true {
+			t.Errorf("expected success, got: %v", result)
+		}
+		if result["action"] != "created" {
+			t.Errorf("expected 'created', got %v", result["action"])
+		}
+	})
+
+	t.Run("applies secret manifest", func(t *testing.T) {
+		manifest := `apiVersion: v1
+kind: Secret
+metadata:
+  name: apply-secret
+stringData:
+  password: secret123
+`
+		writeTestManifest(t, mgr, nsName, "apply-secret", "secret", manifest)
+
+		result, err := tool.Run(nil, map[string]any{
+			"namespace": nsName,
+			"app":       "apply-secret",
+			"type":      "secret",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result["success"] != true {
+			t.Errorf("expected success, got: %v", result)
+		}
+	})
+
+	t.Run("applies ingress manifest", func(t *testing.T) {
+		manifest := `apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: apply-ingress
+spec:
+  rules:
+  - host: example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: my-svc
+            port:
+              number: 80
+`
+		writeTestManifest(t, mgr, nsName, "apply-ingress", "ingress", manifest)
+
+		result, err := tool.Run(nil, map[string]any{
+			"namespace": nsName,
+			"app":       "apply-ingress",
+			"type":      "ingress",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result["success"] != true {
+			t.Errorf("expected success, got: %v", result)
+		}
+	})
+
+	t.Run("type alias normalization", func(t *testing.T) {
+		manifest := `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alias-cm
+data:
+  key: value
+`
+		writeTestManifest(t, mgr, nsName, "alias-cm", "configmap", manifest)
+
+		result, err := tool.Run(nil, map[string]any{
+			"namespace": nsName,
+			"app":       "alias-cm",
+			"type":      "cm", // alias
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result["success"] != true {
+			t.Errorf("expected success, got: %v", result)
+		}
+	})
+}
+
 // containsSubstring checks if s contains substr.
 func containsSubstring(s, substr string) bool {
 	return len(s) >= len(substr) && searchSubstring(s, substr)
