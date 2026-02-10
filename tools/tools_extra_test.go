@@ -1782,6 +1782,308 @@ data:
 	})
 }
 
+// TestGetResourceToolPodAndIngress tests pod and ingress paths of get_resource.
+func TestGetResourceToolPodAndIngress(t *testing.T) {
+	tool := NewGetResourceTool(clientset, dynamicClient)
+
+	nsName := "test-get-pod-ingress"
+	createTestNamespace(t, clientset, nsName)
+
+	t.Run("gets pod", func(t *testing.T) {
+		createTestPod(t, clientset, nsName, "get-test-pod", nil)
+
+		result, err := tool.Run(nil, map[string]any{
+			"kind":      "pod",
+			"name":      "get-test-pod",
+			"namespace": nsName,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if _, ok := result["error"]; ok {
+			t.Fatalf("tool returned error: %v", result["error"])
+		}
+		resource := result["resource"].(map[string]any)
+		metadata := resource["metadata"].(map[string]any)
+		if metadata["name"] != "get-test-pod" {
+			t.Errorf("expected name get-test-pod, got %v", metadata["name"])
+		}
+	})
+
+	t.Run("gets ingress", func(t *testing.T) {
+		// Create an ingress via the create tool
+		mgr := newTestManifestManager(t)
+		createTool := NewCreateIngressTool(clientset, mgr)
+		_, err := createTool.Run(nil, map[string]any{
+			"name":         "get-test-ingress",
+			"namespace":    nsName,
+			"host":         "test.example.com",
+			"service_name": "test-svc",
+			"service_port": float64(80),
+		})
+		if err != nil {
+			t.Fatalf("failed to create ingress: %v", err)
+		}
+
+		result, err := tool.Run(nil, map[string]any{
+			"kind":      "ingress",
+			"name":      "get-test-ingress",
+			"namespace": nsName,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if _, ok := result["error"]; ok {
+			t.Fatalf("tool returned error: %v", result["error"])
+		}
+	})
+}
+
+// TestListHelmReleasesTool tests the list_helm_releases tool.
+func TestListHelmReleasesTool(t *testing.T) {
+	tool := NewListHelmReleasesTool(clientset)
+
+	t.Run("lists releases (empty cluster)", func(t *testing.T) {
+		result, err := tool.Run(nil, map[string]any{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result["count"] != 0 {
+			t.Errorf("expected 0 releases in empty cluster, got %v", result["count"])
+		}
+		if result["scope"] != "all namespaces" {
+			t.Errorf("expected 'all namespaces' scope, got %v", result["scope"])
+		}
+	})
+
+	t.Run("lists with namespace filter", func(t *testing.T) {
+		result, err := tool.Run(nil, map[string]any{
+			"namespace": "default",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result["namespace"] != "default" {
+			t.Errorf("expected namespace 'default', got %v", result["namespace"])
+		}
+	})
+}
+
+// TestGetHelmReleaseTool tests the get_helm_release tool validation.
+func TestGetHelmReleaseTool(t *testing.T) {
+	tool := NewGetHelmReleaseTool(clientset)
+
+	t.Run("validates name required", func(t *testing.T) {
+		result, _ := tool.Run(nil, map[string]any{
+			"namespace": "default",
+		})
+		if result["error"] != "name is required" {
+			t.Errorf("expected 'name is required', got: %v", result["error"])
+		}
+	})
+
+	t.Run("validates namespace required", func(t *testing.T) {
+		result, _ := tool.Run(nil, map[string]any{
+			"name": "my-release",
+		})
+		if result["error"] != "namespace is required" {
+			t.Errorf("expected 'namespace is required', got: %v", result["error"])
+		}
+	})
+
+}
+
+// TestGetHelmValuesTool tests the get_helm_values tool validation.
+func TestGetHelmValuesTool(t *testing.T) {
+	tool := NewGetHelmValuesTool(clientset)
+
+	t.Run("validates name required", func(t *testing.T) {
+		result, _ := tool.Run(nil, map[string]any{
+			"namespace": "default",
+		})
+		if result["error"] != "name is required" {
+			t.Errorf("expected 'name is required', got: %v", result["error"])
+		}
+	})
+
+	t.Run("validates namespace required", func(t *testing.T) {
+		result, _ := tool.Run(nil, map[string]any{
+			"name": "my-release",
+		})
+		if result["error"] != "namespace is required" {
+			t.Errorf("expected 'namespace is required', got: %v", result["error"])
+		}
+	})
+}
+
+// TestFormatDriftScanResults tests the FormatDriftScanResults function.
+func TestFormatDriftScanResults(t *testing.T) {
+	t.Run("empty results", func(t *testing.T) {
+		result := FormatDriftScanResults(&DriftScanResults{Total: 0})
+		if result != "" {
+			t.Errorf("expected empty string for 0 total, got %q", result)
+		}
+	})
+
+	t.Run("all in sync", func(t *testing.T) {
+		result := FormatDriftScanResults(&DriftScanResults{
+			Total:  3,
+			InSync: 3,
+		})
+		if !containsSubstring(result, "all in sync") {
+			t.Errorf("expected 'all in sync', got %q", result)
+		}
+	})
+
+	t.Run("mixed results", func(t *testing.T) {
+		result := FormatDriftScanResults(&DriftScanResults{
+			Total:   4,
+			InSync:  1,
+			Drifted: 1,
+			Missing: 1,
+			Errors:  1,
+			Results: []DriftResult{
+				{Namespace: "default", Name: "app1", Kind: "deployment", Status: "in_sync"},
+				{Namespace: "default", Name: "app2", Kind: "deployment", Status: "drifted", Diffs: []DiffEntry{{Path: "spec.replicas"}}},
+				{Namespace: "default", Name: "app3", Kind: "service", Status: "missing"},
+				{Namespace: "default", Name: "app4", Kind: "configmap", Status: "error", Error: "timeout"},
+			},
+		})
+		if !containsSubstring(result, "OK") {
+			t.Error("expected OK for in_sync resource")
+		}
+		if !containsSubstring(result, "DRIFTED") {
+			t.Error("expected DRIFTED for drifted resource")
+		}
+		if !containsSubstring(result, "NOT IN CLUSTER") {
+			t.Error("expected NOT IN CLUSTER for missing resource")
+		}
+		if !containsSubstring(result, "ERROR") {
+			t.Error("expected ERROR for error resource")
+		}
+	})
+}
+
+// TestFormatDriftContext tests the FormatDriftContext function.
+func TestFormatDriftContext(t *testing.T) {
+	t.Run("nil results", func(t *testing.T) {
+		result := FormatDriftContext(nil)
+		if result != "" {
+			t.Errorf("expected empty string for nil, got %q", result)
+		}
+	})
+
+	t.Run("empty results", func(t *testing.T) {
+		result := FormatDriftContext(&DriftScanResults{Total: 0})
+		if result != "" {
+			t.Errorf("expected empty string for 0 total, got %q", result)
+		}
+	})
+
+	t.Run("all in sync", func(t *testing.T) {
+		result := FormatDriftContext(&DriftScanResults{
+			Total:  2,
+			InSync: 2,
+		})
+		if !containsSubstring(result, "all in sync") {
+			t.Errorf("expected 'all in sync', got %q", result)
+		}
+	})
+
+	t.Run("mixed results", func(t *testing.T) {
+		result := FormatDriftContext(&DriftScanResults{
+			Total:   3,
+			InSync:  1,
+			Drifted: 1,
+			Missing: 1,
+			Results: []DriftResult{
+				{Namespace: "ns", Name: "a", Kind: "deployment", Status: "in_sync"},
+				{Namespace: "ns", Name: "b", Kind: "service", Status: "drifted", Diffs: []DiffEntry{{Path: "p"}, {Path: "q"}}},
+				{Namespace: "ns", Name: "c", Kind: "configmap", Status: "missing"},
+			},
+		})
+		if !containsSubstring(result, "in sync") {
+			t.Error("expected 'in sync'")
+		}
+		if !containsSubstring(result, "drifted") {
+			t.Error("expected 'drifted'")
+		}
+		if !containsSubstring(result, "not found in cluster") {
+			t.Error("expected 'not found in cluster'")
+		}
+		if !containsSubstring(result, "diff_resource") {
+			t.Error("expected diff_resource hint")
+		}
+	})
+}
+
+// TestFetchAndCleanLiveResource tests FetchAndCleanLiveResource.
+func TestFetchAndCleanLiveResource(t *testing.T) {
+	nsName := "test-fetch-clean"
+	createTestNamespace(t, clientset, nsName)
+	createTestDeployment(t, clientset, nsName, "fc-deploy")
+
+	t.Run("fetches and cleans deployment", func(t *testing.T) {
+		result, err := FetchAndCleanLiveResource(t.Context(), dynamicClient, nsName, "fc-deploy", "deployment", "apps/v1")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		metadata := result["metadata"].(map[string]any)
+		// Should have been cleaned
+		if _, ok := metadata["managedFields"]; ok {
+			t.Error("expected managedFields to be removed")
+		}
+		if _, ok := metadata["uid"]; ok {
+			t.Error("expected uid to be removed")
+		}
+		// status should be removed
+		if _, ok := result["status"]; ok {
+			t.Error("expected status to be removed")
+		}
+	})
+
+	t.Run("returns error for unknown kind", func(t *testing.T) {
+		_, err := FetchAndCleanLiveResource(t.Context(), dynamicClient, nsName, "test", "unknownthing", "")
+		if err == nil {
+			t.Error("expected error for unknown kind")
+		}
+	})
+
+	t.Run("returns error for non-existent resource", func(t *testing.T) {
+		_, err := FetchAndCleanLiveResource(t.Context(), dynamicClient, nsName, "nonexistent", "deployment", "apps/v1")
+		if err == nil {
+			t.Error("expected error for non-existent resource")
+		}
+	})
+}
+
+// TestCompareManifest tests the CompareManifest function.
+func TestCompareManifest(t *testing.T) {
+	nsName := "test-compare-manifest"
+	createTestNamespace(t, clientset, nsName)
+
+	t.Run("detects missing resource", func(t *testing.T) {
+		yaml := `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: compare-missing
+spec:
+  replicas: 1
+`
+		result := CompareManifest(t.Context(), dynamicClient, nsName, "compare-missing", "deployment", []byte(yaml))
+		if result.Status != "missing" {
+			t.Errorf("expected status 'missing', got %q", result.Status)
+		}
+	})
+
+	t.Run("handles invalid YAML", func(t *testing.T) {
+		result := CompareManifest(t.Context(), dynamicClient, nsName, "test", "deployment", []byte("{{{bad"))
+		if result.Status != "error" {
+			t.Errorf("expected status 'error', got %q", result.Status)
+		}
+	})
+}
+
 // containsSubstring checks if s contains substr.
 func containsSubstring(s, substr string) bool {
 	return len(s) >= len(substr) && searchSubstring(s, substr)
