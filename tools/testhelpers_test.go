@@ -240,6 +240,12 @@ func configureGitUser(t *testing.T, dir string) {
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("failed to configure git user name: %v", err)
 	}
+
+	cmd = exec.Command("git", "config", "commit.gpgsign", "false")
+	cmd.Dir = dir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("failed to disable commit signing: %v", err)
+	}
 }
 
 // writeTestManifest writes a manifest file directly to the test manager directory.

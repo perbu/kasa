@@ -1372,6 +1372,11 @@ func TestKubeToolsAll(t *testing.T) {
 		"fetch_url",
 		"search_web",
 		"http_request",
+		"list_helm_releases",
+		"get_helm_release",
+		"get_helm_values",
+		"sync_manifests",
+		"push_manifests",
 	}
 
 	if len(tools) != len(expectedTools) {
