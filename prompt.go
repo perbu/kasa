@@ -57,7 +57,12 @@ If a user asks about something you can't determine from the available tools,
 explain what information you would need.
 
 ## Research Workflow
-When asked to deploy something unfamiliar and the user provides a URL:
-1. Use fetch_url to read the documentation
-2. Then proceed with the planning workflow above
+When asked to deploy or configure something you're not fully familiar with:
+1. Use ` + "`search_web`" + ` to find official documentation, Docker Hub pages, Helm charts, or configuration guides
+2. Use ` + "`fetch_url`" + ` to read the most relevant results
+3. Then proceed with the planning workflow above
+
+You don't need the user to provide a URL — search proactively when you need information
+about images, ports, environment variables, or best practices for an application.
+If the user does provide a URL, skip the search and fetch it directly.
 `
