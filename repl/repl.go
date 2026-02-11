@@ -125,32 +125,31 @@ func (r *REPL) runAgentSync(ctx context.Context, state *SessionState, prompt str
 	return nil
 }
 
-// PrintWelcome displays a fancy markdown-rendered welcome message.
+// PrintWelcome displays the colorized logo and session info.
 func (r *REPL) PrintWelcome(version, model string, toolCount int, deploymentsDir string) {
-	welcome := fmt.Sprintf(`# Kasa %s
+	// Colorized ASCII art logo
+	fmt.Print(RenderLogo(version))
+	fmt.Println()
 
-**Kubernetes Deployment Assistant** _(Safe Mode)_
-
-| Setting | Value |
+	// Session info rendered as markdown
+	info := fmt.Sprintf(`| Setting | Value |
 |---------|-------|
 | Model | %s |
 | Tools | %d |
-| Deployments folder | %s |
+| Deployments | %s |
 
 Commands: **EXECUTE**/**ABORT** to approve/reject plans, **exit** to quit.
-`, version, model, toolCount, deploymentsDir)
+`, model, toolCount, deploymentsDir)
 
 	renderer, err := setupMarkdownRenderer()
 	if err != nil {
-		fmt.Printf("Kasa %s - Kubernetes Deployment Assistant (Safe Mode)\n", version)
 		fmt.Printf("Model: %s | Tools: %d | Deployments: %s\n", model, toolCount, deploymentsDir)
 		fmt.Printf("Type 'exit' or 'quit' to exit.\n\n")
 		return
 	}
 
-	rendered, err := renderer.Render(welcome)
+	rendered, err := renderer.Render(info)
 	if err != nil {
-		fmt.Printf("Kasa %s - Kubernetes Deployment Assistant (Safe Mode)\n", version)
 		fmt.Printf("Model: %s | Tools: %d | Deployments: %s\n", model, toolCount, deploymentsDir)
 		fmt.Printf("Type 'exit' or 'quit' to exit.\n\n")
 		return
