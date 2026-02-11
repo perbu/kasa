@@ -11,20 +11,23 @@ import (
 	"golang.org/x/term"
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/runner"
+	"google.golang.org/adk/session"
 	"google.golang.org/genai"
 )
 
 // REPL manages the interactive read-eval-print loop.
 type REPL struct {
-	runner *runner.Runner
-	debug  bool
+	runner         *runner.Runner
+	sessionService session.Service
+	debug          bool
 }
 
 // New creates a new REPL instance.
-func New(r *runner.Runner, debug bool) *REPL {
+func New(r *runner.Runner, ss session.Service, debug bool) *REPL {
 	return &REPL{
-		runner: r,
-		debug:  debug,
+		runner:         r,
+		sessionService: ss,
+		debug:          debug,
 	}
 }
 
@@ -36,7 +39,7 @@ func (r *REPL) Run(ctx context.Context) error {
 	// late end up in stdin and get interpreted as user input by bubbletea.
 	drainStdin()
 
-	m := newModel(r.runner, r.debug)
+	m := newModel(r.runner, r.sessionService, r.debug)
 	p := tea.NewProgram(m, tea.WithContext(ctx))
 	_, err := p.Run()
 	return err

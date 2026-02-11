@@ -31,9 +31,12 @@ type model struct {
 	history  *History
 	state    *SessionState
 
-	runner     *runner.Runner
-	debug      bool
-	mdRenderer *glamour.TermRenderer
+	runner         *runner.Runner
+	sessionService session.Service
+	sessionID      string
+	sessionCounter int
+	debug          bool
+	mdRenderer     *glamour.TermRenderer
 
 	// agent execution state
 	agentBusy   bool
@@ -67,7 +70,7 @@ var statusStyle = lipgloss.NewStyle().Faint(true)
 // separatorStyle is the dim style for the horizontal rule between turns.
 var separatorStyle = lipgloss.NewStyle().Faint(true)
 
-func newModel(r *runner.Runner, debug bool) model {
+func newModel(r *runner.Runner, ss session.Service, debug bool) model {
 	ta := textarea.New()
 	ta.Placeholder = "Type a message..."
 	ta.Prompt = "> "
@@ -105,14 +108,17 @@ func newModel(r *runner.Runner, debug bool) model {
 	)
 
 	return model{
-		textarea:   ta,
-		spinner:    s,
-		history:    NewHistory(),
-		state:      NewSessionState(),
-		runner:     r,
-		debug:      debug,
-		mdRenderer: md,
-		eventCh:    make(chan agentEventMsg, 64),
+		textarea:       ta,
+		spinner:        s,
+		history:        NewHistory(),
+		state:          NewSessionState(),
+		runner:         r,
+		sessionService: ss,
+		sessionID:      "session1",
+		sessionCounter: 1,
+		debug:          debug,
+		mdRenderer:     md,
+		eventCh:        make(chan agentEventMsg, 64),
 	}
 }
 
@@ -324,6 +330,30 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 			cmds = append(cmds, tea.Println("No pending plan."))
 		}
 		return m, tea.Batch(cmds...)
+
+	case "/clear":
+		ctx := context.Background()
+		// Delete old session
+		_ = m.sessionService.Delete(ctx, &session.DeleteRequest{
+			AppName:   "kasa",
+			UserID:    "user1",
+			SessionID: m.sessionID,
+		})
+		// Create new session with incremented counter
+		m.sessionCounter++
+		m.sessionID = fmt.Sprintf("session%d", m.sessionCounter)
+		_, err := m.sessionService.Create(ctx, &session.CreateRequest{
+			AppName:   "kasa",
+			UserID:    "user1",
+			SessionID: m.sessionID,
+		})
+		if err != nil {
+			cmds = append(cmds, tea.Println(fmt.Sprintf("Failed to clear context: %v", err)))
+			return m, tea.Batch(cmds...)
+		}
+		m.state = NewSessionState()
+		cmds = append(cmds, tea.Println("Context cleared."))
+		return m, tea.Batch(cmds...)
 	}
 
 	// If there's a pending plan, warn
@@ -359,7 +389,7 @@ func (m *model) startAgent(prompt string) tea.Cmd {
 		}()
 
 		userMessage := genai.NewContentFromText(prompt, genai.RoleUser)
-		for event, err := range m.runner.Run(ctx, "user1", "session1", userMessage, agent.RunConfig{}) {
+		for event, err := range m.runner.Run(ctx, "user1", m.sessionID, userMessage, agent.RunConfig{}) {
 			if err != nil {
 				ch <- agentEventMsg{err: err}
 				return
