@@ -10,21 +10,17 @@ func TestParsePlanFromResponse(t *testing.T) {
 		"description": "Deploy nginx to default namespace",
 		"actions": []any{
 			map[string]any{
-				"tool":   "create_deployment",
+				"tool":   "apply_resource",
 				"reason": "create the nginx deployment",
 				"parameters": map[string]any{
-					"namespace": "default",
-					"name":      "nginx",
-					"image":     "nginx:latest",
+					"yaml": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: nginx\n  namespace: default",
 				},
 			},
 			map[string]any{
-				"tool":   "create_service",
+				"tool":   "apply_resource",
 				"reason": "expose nginx",
 				"parameters": map[string]any{
-					"namespace": "default",
-					"name":      "nginx",
-					"port":      float64(80),
+					"yaml": "apiVersion: v1\nkind: Service\nmetadata:\n  name: nginx\n  namespace: default",
 				},
 			},
 		},
@@ -40,14 +36,14 @@ func TestParsePlanFromResponse(t *testing.T) {
 	if len(plan.Actions) != 2 {
 		t.Fatalf("expected 2 actions, got %d", len(plan.Actions))
 	}
-	if plan.Actions[0].Tool != "create_deployment" {
-		t.Errorf("expected create_deployment, got %s", plan.Actions[0].Tool)
+	if plan.Actions[0].Tool != "apply_resource" {
+		t.Errorf("expected apply_resource, got %s", plan.Actions[0].Tool)
 	}
-	if plan.Actions[0].Parameters["namespace"] != "default" {
-		t.Errorf("unexpected namespace: %v", plan.Actions[0].Parameters["namespace"])
+	if plan.Actions[0].Parameters["yaml"] == nil {
+		t.Error("expected yaml parameter in first action")
 	}
-	if plan.Actions[1].Tool != "create_service" {
-		t.Errorf("expected create_service, got %s", plan.Actions[1].Tool)
+	if plan.Actions[1].Tool != "apply_resource" {
+		t.Errorf("expected apply_resource, got %s", plan.Actions[1].Tool)
 	}
 }
 
@@ -105,9 +101,9 @@ func TestBuildPlanMarkdown(t *testing.T) {
 		Description: "Test deployment plan",
 		Actions: []PlannedAction{
 			{
-				Tool:       "create_deployment",
+				Tool:       "apply_resource",
 				Reason:     "create nginx",
-				Parameters: map[string]any{"name": "nginx", "namespace": "default"},
+				Parameters: map[string]any{"yaml": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: nginx"},
 			},
 		},
 	}
@@ -120,7 +116,7 @@ func TestBuildPlanMarkdown(t *testing.T) {
 	if !strings.Contains(md, "Test deployment plan") {
 		t.Error("expected description in markdown")
 	}
-	if !strings.Contains(md, "`create_deployment`") {
+	if !strings.Contains(md, "`apply_resource`") {
 		t.Error("expected tool name in markdown")
 	}
 	if !strings.Contains(md, "create nginx") {
@@ -156,9 +152,9 @@ func TestFormatExecutionPrompt(t *testing.T) {
 		Description: "Scale nginx",
 		Actions: []PlannedAction{
 			{
-				Tool:       "create_deployment",
+				Tool:       "apply_resource",
 				Reason:     "scale up",
-				Parameters: map[string]any{"replicas": float64(3)},
+				Parameters: map[string]any{"yaml": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: nginx\nspec:\n  replicas: 3"},
 			},
 		},
 	}
@@ -171,7 +167,7 @@ func TestFormatExecutionPrompt(t *testing.T) {
 	if !strings.Contains(prompt, "Scale nginx") {
 		t.Error("expected plan description in prompt")
 	}
-	if !strings.Contains(prompt, "create_deployment") {
+	if !strings.Contains(prompt, "apply_resource") {
 		t.Error("expected tool name in prompt")
 	}
 	if !strings.Contains(prompt, "scale up") {

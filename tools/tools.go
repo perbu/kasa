@@ -56,18 +56,12 @@ func NewKubeTools(clientset *kubernetes.Clientset, dynamicClient dynamic.Interfa
 func (k *KubeTools) All() []tool.Tool {
 	return []tool.Tool{
 		NewListNamespacesTool(k.clientset),
-		NewCreateNamespaceTool(k.clientset),
 		NewDeleteNamespaceTool(k.clientset, k.manifest),
 		NewListPodsTool(k.clientset),
 		NewGetLogsTool(k.clientset),
 		NewGetEventsTool(k.clientset),
 		NewGetResourceTool(k.clientset, k.dynamicClient),
 		NewGetReferenceTool(),
-		NewCreateDeploymentTool(k.clientset, k.manifest),
-		NewCreateServiceTool(k.clientset, k.manifest),
-		NewCreateConfigMapTool(k.clientset, k.manifest),
-		NewCreateSecretTool(k.clientset, k.manifest),
-		NewCreateIngressTool(k.clientset, k.manifest),
 		NewCheckDeploymentHealthTool(k.clientset),
 		NewCommitManifestsTool(k.manifest),
 		NewSyncManifestsTool(k.manifest),
@@ -78,7 +72,7 @@ func (k *KubeTools) All() []tool.Tool {
 		NewDeleteResourceTool(k.clientset, k.dynamicClient, k.manifest),
 		NewImportResourceTool(k.clientset, k.dynamicClient, k.manifest),
 		NewApplyManifestTool(k.clientset, k.manifest),
-		NewDryRunApplyTool(k.clientset, k.manifest),
+		NewDryRunApplyTool(k.clientset, k.dynamicClient, k.manifest),
 		NewProposePlanTool(),
 		NewAskClarificationTool(),
 		// Generic resource tools using dynamic client

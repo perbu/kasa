@@ -11,9 +11,9 @@ func TestIsMutating(t *testing.T) {
 	mgr := newTestManifestManager(t)
 
 	t.Run("mutating tools return true", func(t *testing.T) {
-		tool := NewCreateDeploymentTool(clientset, mgr)
+		tool := NewApplyResourceTool(dynamicClient, mgr)
 		if !IsMutating(tool) {
-			t.Error("expected create_deployment to be mutating")
+			t.Error("expected apply_resource to be mutating")
 		}
 	})
 
@@ -101,8 +101,8 @@ func TestGenerateToolDocs(t *testing.T) {
 	if !containsSubstring(docs, "list_namespaces") {
 		t.Error("expected list_namespaces in docs")
 	}
-	if !containsSubstring(docs, "create_deployment") {
-		t.Error("expected create_deployment in docs")
+	if !containsSubstring(docs, "apply_resource") {
+		t.Error("expected apply_resource in docs")
 	}
 	if !containsSubstring(docs, "propose_plan") {
 		t.Error("expected propose_plan in docs")
@@ -118,8 +118,8 @@ func TestProposePlanTool(t *testing.T) {
 			"description": "Deploy nginx to default namespace",
 			"actions": []any{
 				map[string]any{
-					"tool":       "create_deployment",
-					"parameters": map[string]any{"name": "nginx", "image": "nginx:1.25"},
+					"tool":       "apply_resource",
+					"parameters": map[string]any{"yaml": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: nginx"},
 					"reason":     "Create the nginx deployment",
 				},
 			},
@@ -338,91 +338,6 @@ func TestAskClarificationTool(t *testing.T) {
 	})
 }
 
-// TestCreateNamespaceTool tests the create_namespace tool.
-func TestCreateNamespaceTool(t *testing.T) {
-	tool := NewCreateNamespaceTool(clientset)
-
-	t.Run("creates namespace", func(t *testing.T) {
-		nsName := "test-create-ns-new"
-		t.Cleanup(func() {
-			_ = clientset.CoreV1().Namespaces().Delete(t.Context(), nsName, metav1.DeleteOptions{})
-		})
-
-		result, err := tool.Run(nil, map[string]any{
-			"name": nsName,
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result["success"] != true {
-			t.Errorf("expected success, got: %v", result)
-		}
-
-		// Verify namespace exists
-		ns, err := clientset.CoreV1().Namespaces().Get(t.Context(), nsName, metav1.GetOptions{})
-		if err != nil {
-			t.Fatalf("namespace not found: %v", err)
-		}
-		if ns.Labels["app.kubernetes.io/managed-by"] != "kasa" {
-			t.Error("expected managed-by label")
-		}
-	})
-
-	t.Run("creates namespace with labels", func(t *testing.T) {
-		nsName := "test-create-ns-labels"
-		t.Cleanup(func() {
-			_ = clientset.CoreV1().Namespaces().Delete(t.Context(), nsName, metav1.DeleteOptions{})
-		})
-
-		result, err := tool.Run(nil, map[string]any{
-			"name": nsName,
-			"labels": map[string]any{
-				"env": "test",
-			},
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result["success"] != true {
-			t.Errorf("expected success, got: %v", result)
-		}
-
-		ns, _ := clientset.CoreV1().Namespaces().Get(t.Context(), nsName, metav1.GetOptions{})
-		if ns.Labels["env"] != "test" {
-			t.Error("expected env=test label")
-		}
-	})
-
-	t.Run("detects existing namespace", func(t *testing.T) {
-		nsName := "test-create-ns-exists"
-		createTestNamespace(t, clientset, nsName)
-
-		result, err := tool.Run(nil, map[string]any{
-			"name": nsName,
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result["exists"] != true {
-			t.Errorf("expected exists=true, got: %v", result)
-		}
-	})
-
-	t.Run("validates required name", func(t *testing.T) {
-		result, _ := tool.Run(nil, map[string]any{})
-		if result["error"] != "name is required" {
-			t.Errorf("expected 'name is required' error, got: %v", result["error"])
-		}
-	})
-
-	t.Run("invalid args type", func(t *testing.T) {
-		result, _ := tool.Run(nil, 42)
-		if result["error"] != "invalid arguments type" {
-			t.Errorf("expected 'invalid arguments type', got: %v", result["error"])
-		}
-	})
-}
-
 // TestDeleteNamespaceTool tests the delete_namespace tool.
 func TestDeleteNamespaceTool(t *testing.T) {
 	mgr := newTestManifestManager(t)
@@ -487,313 +402,6 @@ func TestDeleteNamespaceTool(t *testing.T) {
 		}
 		if result["success"] != true {
 			t.Errorf("expected success, got: %v", result)
-		}
-	})
-}
-
-// TestCreateConfigMapTool tests the create_configmap tool.
-func TestCreateConfigMapTool(t *testing.T) {
-	nsName := "test-create-cm"
-	createTestNamespace(t, clientset, nsName)
-	mgr := newTestManifestManager(t)
-
-	tool := NewCreateConfigMapTool(clientset, mgr)
-
-	t.Run("creates configmap", func(t *testing.T) {
-		result, err := tool.Run(nil, map[string]any{
-			"name":      "my-config",
-			"namespace": nsName,
-			"data": map[string]any{
-				"key1": "value1",
-				"key2": "value2",
-			},
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result["action"] != "created" {
-			t.Errorf("expected action 'created', got %v", result["action"])
-		}
-		if result["keys"] != 2 {
-			t.Errorf("expected 2 keys, got %v", result["keys"])
-		}
-
-		// Verify in cluster
-		cm, err := clientset.CoreV1().ConfigMaps(nsName).Get(t.Context(), "my-config", metav1.GetOptions{})
-		if err != nil {
-			t.Fatalf("configmap not found: %v", err)
-		}
-		if cm.Data["key1"] != "value1" {
-			t.Errorf("expected key1=value1, got %s", cm.Data["key1"])
-		}
-	})
-
-	t.Run("updates existing configmap", func(t *testing.T) {
-		// First create
-		_, _ = tool.Run(nil, map[string]any{
-			"name":      "update-cm",
-			"namespace": nsName,
-			"data":      map[string]any{"old": "value"},
-		})
-
-		// Then update
-		result, err := tool.Run(nil, map[string]any{
-			"name":      "update-cm",
-			"namespace": nsName,
-			"data":      map[string]any{"new": "value"},
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result["action"] != "updated" {
-			t.Errorf("expected action 'updated', got %v", result["action"])
-		}
-	})
-
-	t.Run("handles non-string data values", func(t *testing.T) {
-		result, err := tool.Run(nil, map[string]any{
-			"name":      "json-cm",
-			"namespace": nsName,
-			"data": map[string]any{
-				"count": float64(42),
-			},
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result["action"] != "created" {
-			t.Errorf("expected created, got %v", result["action"])
-		}
-	})
-
-	t.Run("validates required parameters", func(t *testing.T) {
-		result, _ := tool.Run(nil, map[string]any{
-			"namespace": nsName,
-			"data":      map[string]any{"k": "v"},
-		})
-		if result["error"] != "name is required" {
-			t.Errorf("expected name required error, got: %v", result["error"])
-		}
-
-		result, _ = tool.Run(nil, map[string]any{
-			"name": "test",
-			"data": map[string]any{"k": "v"},
-		})
-		if result["error"] != "namespace is required" {
-			t.Errorf("expected namespace required error, got: %v", result["error"])
-		}
-
-		result, _ = tool.Run(nil, map[string]any{
-			"name":      "test",
-			"namespace": nsName,
-		})
-		if result["error"] != "data is required" {
-			t.Errorf("expected data required error, got: %v", result["error"])
-		}
-	})
-}
-
-// TestCreateSecretTool tests the create_secret tool.
-func TestCreateSecretTool(t *testing.T) {
-	nsName := "test-create-secret"
-	createTestNamespace(t, clientset, nsName)
-	mgr := newTestManifestManager(t)
-
-	tool := NewCreateSecretTool(clientset, mgr)
-
-	t.Run("creates secret", func(t *testing.T) {
-		result, err := tool.Run(nil, map[string]any{
-			"name":      "my-secret",
-			"namespace": nsName,
-			"string_data": map[string]any{
-				"password": "secret123",
-			},
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result["action"] != "created" {
-			t.Errorf("expected action 'created', got %v", result["action"])
-		}
-		if result["type"] != "Opaque" {
-			t.Errorf("expected type Opaque, got %v", result["type"])
-		}
-	})
-
-	t.Run("creates with custom type", func(t *testing.T) {
-		result, err := tool.Run(nil, map[string]any{
-			"name":      "tls-secret",
-			"namespace": nsName,
-			"type":      "kubernetes.io/tls",
-			"string_data": map[string]any{
-				"tls.crt": "cert-data",
-				"tls.key": "key-data",
-			},
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result["type"] != "kubernetes.io/tls" {
-			t.Errorf("expected type kubernetes.io/tls, got %v", result["type"])
-		}
-	})
-
-	t.Run("updates existing secret", func(t *testing.T) {
-		_, _ = tool.Run(nil, map[string]any{
-			"name":        "upd-secret",
-			"namespace":   nsName,
-			"string_data": map[string]any{"old": "val"},
-		})
-		result, err := tool.Run(nil, map[string]any{
-			"name":        "upd-secret",
-			"namespace":   nsName,
-			"string_data": map[string]any{"new": "val"},
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result["action"] != "updated" {
-			t.Errorf("expected 'updated', got %v", result["action"])
-		}
-	})
-
-	t.Run("validates required parameters", func(t *testing.T) {
-		result, _ := tool.Run(nil, map[string]any{
-			"namespace":   nsName,
-			"string_data": map[string]any{"k": "v"},
-		})
-		if result["error"] != "name is required" {
-			t.Errorf("expected name required, got: %v", result["error"])
-		}
-
-		result, _ = tool.Run(nil, map[string]any{
-			"name":        "test",
-			"string_data": map[string]any{"k": "v"},
-		})
-		if result["error"] != "namespace is required" {
-			t.Errorf("expected namespace required, got: %v", result["error"])
-		}
-
-		result, _ = tool.Run(nil, map[string]any{
-			"name":      "test",
-			"namespace": nsName,
-		})
-		if result["error"] != "string_data is required" {
-			t.Errorf("expected string_data required, got: %v", result["error"])
-		}
-	})
-}
-
-// TestCreateIngressTool tests the create_ingress tool.
-func TestCreateIngressTool(t *testing.T) {
-	nsName := "test-create-ingress"
-	createTestNamespace(t, clientset, nsName)
-	mgr := newTestManifestManager(t)
-
-	tool := NewCreateIngressTool(clientset, mgr)
-
-	t.Run("creates basic ingress", func(t *testing.T) {
-		result, err := tool.Run(nil, map[string]any{
-			"name":         "my-ingress",
-			"namespace":    nsName,
-			"host":         "example.com",
-			"service_name": "my-svc",
-			"service_port": float64(80),
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result["action"] != "created" {
-			t.Errorf("expected 'created', got %v", result["action"])
-		}
-		if result["host"] != "example.com" {
-			t.Errorf("expected host example.com, got %v", result["host"])
-		}
-		if result["path"] != "/" {
-			t.Errorf("expected default path /, got %v", result["path"])
-		}
-	})
-
-	t.Run("creates ingress with TLS", func(t *testing.T) {
-		result, err := tool.Run(nil, map[string]any{
-			"name":         "tls-ingress",
-			"namespace":    nsName,
-			"host":         "secure.example.com",
-			"service_name": "my-svc",
-			"service_port": float64(443),
-			"tls_secret":   "my-tls-secret",
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result["tls_enabled"] != true {
-			t.Error("expected tls_enabled=true")
-		}
-		if result["tls_secret"] != "my-tls-secret" {
-			t.Errorf("expected tls_secret 'my-tls-secret', got %v", result["tls_secret"])
-		}
-	})
-
-	t.Run("creates ingress with custom path and class", func(t *testing.T) {
-		result, err := tool.Run(nil, map[string]any{
-			"name":          "custom-ingress",
-			"namespace":     nsName,
-			"host":          "api.example.com",
-			"service_name":  "api-svc",
-			"service_port":  float64(8080),
-			"path":          "/api",
-			"ingress_class": "nginx",
-			"annotations": map[string]any{
-				"nginx.ingress.kubernetes.io/rewrite-target": "/",
-			},
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result["path"] != "/api" {
-			t.Errorf("expected path /api, got %v", result["path"])
-		}
-	})
-
-	t.Run("validates required parameters", func(t *testing.T) {
-		// Missing name
-		result, _ := tool.Run(nil, map[string]any{
-			"namespace": nsName, "host": "h", "service_name": "s", "service_port": float64(80),
-		})
-		if result["error"] != "name is required" {
-			t.Errorf("expected name required, got: %v", result["error"])
-		}
-
-		// Missing namespace
-		result, _ = tool.Run(nil, map[string]any{
-			"name": "t", "host": "h", "service_name": "s", "service_port": float64(80),
-		})
-		if result["error"] != "namespace is required" {
-			t.Errorf("expected namespace required, got: %v", result["error"])
-		}
-
-		// Missing host
-		result, _ = tool.Run(nil, map[string]any{
-			"name": "t", "namespace": nsName, "service_name": "s", "service_port": float64(80),
-		})
-		if result["error"] != "host is required" {
-			t.Errorf("expected host required, got: %v", result["error"])
-		}
-
-		// Missing service_name
-		result, _ = tool.Run(nil, map[string]any{
-			"name": "t", "namespace": nsName, "host": "h", "service_port": float64(80),
-		})
-		if result["error"] != "service_name is required" {
-			t.Errorf("expected service_name required, got: %v", result["error"])
-		}
-
-		// Missing service_port
-		result, _ = tool.Run(nil, map[string]any{
-			"name": "t", "namespace": nsName, "host": "h", "service_name": "s",
-		})
-		if result["error"] != "service_port is required" {
-			t.Errorf("expected service_port required, got: %v", result["error"])
 		}
 	})
 }
@@ -1811,19 +1419,33 @@ func TestGetResourceToolPodAndIngress(t *testing.T) {
 	})
 
 	t.Run("gets ingress", func(t *testing.T) {
-		// Create an ingress via the create tool
-		mgr := newTestManifestManager(t)
-		createTool := NewCreateIngressTool(clientset, mgr)
-		_, err := createTool.Run(nil, map[string]any{
-			"name":         "get-test-ingress",
-			"namespace":    nsName,
-			"host":         "test.example.com",
-			"service_name": "test-svc",
-			"service_port": float64(80),
-		})
+		// Create an ingress directly via apply_resource
+		applyTool := NewApplyResourceTool(dynamicClient, nil)
+		ingressYAML := `apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: get-test-ingress
+  namespace: ` + nsName + `
+spec:
+  rules:
+  - host: test.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: test-svc
+            port:
+              number: 80
+`
+		_, err := applyTool.Run(nil, map[string]any{"yaml": ingressYAML})
 		if err != nil {
 			t.Fatalf("failed to create ingress: %v", err)
 		}
+		t.Cleanup(func() {
+			_ = dynamicClient.Resource(CommonGVRs["ingress"]).Namespace(nsName).Delete(t.Context(), "get-test-ingress", metav1.DeleteOptions{})
+		})
 
 		result, err := tool.Run(nil, map[string]any{
 			"kind":      "ingress",

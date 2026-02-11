@@ -54,14 +54,13 @@ Tools are classified in `tools/tools.go`:
 **Read-Only (use freely):**
 - list_namespaces, list_pods, get_logs, get_events, get_resource
 - get_reference, check_deployment_health
-- list_manifests, read_manifest, dry_run_apply
+- list_manifests, read_manifest, dry_run_apply (supports inline YAML validation)
 - list_resources (generic, supports CRDs)
 
 **Mutating (require plan approval):**
-- create_namespace, delete_namespace
-- create_deployment, create_service, create_configmap, create_secret, create_ingress
-- delete_resource, delete_manifest
-- apply_manifest, apply_resource, import_resource, commit_manifests
+- delete_namespace, delete_resource, delete_manifest
+- apply_resource (single tool for all resource creation/updates via YAML)
+- apply_manifest, import_resource, commit_manifests
 
 ### REPL Commands
 

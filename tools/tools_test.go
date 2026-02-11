@@ -413,222 +413,6 @@ func TestCheckDeploymentHealthTool(t *testing.T) {
 	})
 }
 
-// TestCreateDeploymentTool tests the create_deployment tool.
-func TestCreateDeploymentTool(t *testing.T) {
-	nsName := "test-create-deploy"
-	createTestNamespace(t, clientset, nsName)
-	mgr := newTestManifestManager(t)
-
-	tool := NewCreateDeploymentTool(clientset, mgr)
-
-	t.Run("creates new deployment", func(t *testing.T) {
-		result, err := tool.Run(nil, map[string]any{
-			"name":      "new-nginx",
-			"namespace": nsName,
-			"image":     "nginx:1.25",
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if errMsg, ok := result["error"].(string); ok {
-			t.Fatalf("tool returned error: %s", errMsg)
-		}
-
-		if result["action"] != "created" {
-			t.Errorf("expected action 'created', got %v", result["action"])
-		}
-
-		// Verify in cluster
-		deploy, err := clientset.AppsV1().Deployments(nsName).Get(t.Context(), "new-nginx", metav1.GetOptions{})
-		if err != nil {
-			t.Fatalf("failed to get deployment: %v", err)
-		}
-
-		if deploy.Spec.Template.Spec.Containers[0].Image != "nginx:1.25" {
-			t.Errorf("expected image nginx:1.25, got %s", deploy.Spec.Template.Spec.Containers[0].Image)
-		}
-
-		// Verify manifest was saved
-		content, err := mgr.ReadManifest(nsName, "new-nginx", "deployment")
-		if err != nil {
-			t.Fatalf("failed to read manifest: %v", err)
-		}
-		if len(content) == 0 {
-			t.Error("expected non-empty manifest content")
-		}
-	})
-
-	t.Run("updates existing deployment", func(t *testing.T) {
-		// First create
-		_, err := tool.Run(nil, map[string]any{
-			"name":      "update-nginx",
-			"namespace": nsName,
-			"image":     "nginx:1.24",
-		})
-		if err != nil {
-			t.Fatalf("unexpected error on create: %v", err)
-		}
-
-		// Then update
-		result, err := tool.Run(nil, map[string]any{
-			"name":      "update-nginx",
-			"namespace": nsName,
-			"image":     "nginx:1.25",
-		})
-		if err != nil {
-			t.Fatalf("unexpected error on update: %v", err)
-		}
-
-		if result["action"] != "updated" {
-			t.Errorf("expected action 'updated', got %v", result["action"])
-		}
-
-		// Verify image was updated
-		deploy, _ := clientset.AppsV1().Deployments(nsName).Get(t.Context(), "update-nginx", metav1.GetOptions{})
-		if deploy.Spec.Template.Spec.Containers[0].Image != "nginx:1.25" {
-			t.Errorf("expected image nginx:1.25, got %s", deploy.Spec.Template.Spec.Containers[0].Image)
-		}
-	})
-
-	t.Run("creates with optional parameters", func(t *testing.T) {
-		result, err := tool.Run(nil, map[string]any{
-			"name":        "full-nginx",
-			"namespace":   nsName,
-			"image":       "nginx:1.25",
-			"replicas":    float64(3),
-			"port":        float64(80),
-			"health_path": "/health",
-			"env": map[string]any{
-				"ENV_VAR": "value",
-			},
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if errMsg, ok := result["error"].(string); ok {
-			t.Fatalf("tool returned error: %s", errMsg)
-		}
-
-		deploy, _ := clientset.AppsV1().Deployments(nsName).Get(t.Context(), "full-nginx", metav1.GetOptions{})
-
-		if *deploy.Spec.Replicas != 3 {
-			t.Errorf("expected 3 replicas, got %d", *deploy.Spec.Replicas)
-		}
-
-		if len(deploy.Spec.Template.Spec.Containers[0].Ports) != 1 {
-			t.Error("expected 1 port")
-		}
-
-		if deploy.Spec.Template.Spec.Containers[0].LivenessProbe == nil {
-			t.Error("expected liveness probe")
-		}
-	})
-
-	t.Run("validates required parameters", func(t *testing.T) {
-		result, _ := tool.Run(nil, map[string]any{
-			"namespace": nsName,
-			"image":     "nginx:1.25",
-		})
-		if _, ok := result["error"]; !ok {
-			t.Error("expected error when name is missing")
-		}
-
-		result, _ = tool.Run(nil, map[string]any{
-			"name":  "test",
-			"image": "nginx:1.25",
-		})
-		if _, ok := result["error"]; !ok {
-			t.Error("expected error when namespace is missing")
-		}
-
-		result, _ = tool.Run(nil, map[string]any{
-			"name":      "test",
-			"namespace": nsName,
-		})
-		if _, ok := result["error"]; !ok {
-			t.Error("expected error when image is missing")
-		}
-	})
-}
-
-// TestCreateServiceTool tests the create_service tool.
-func TestCreateServiceTool(t *testing.T) {
-	nsName := "test-create-svc"
-	createTestNamespace(t, clientset, nsName)
-	mgr := newTestManifestManager(t)
-
-	tool := NewCreateServiceTool(clientset, mgr)
-
-	t.Run("creates ClusterIP service", func(t *testing.T) {
-		result, err := tool.Run(nil, map[string]any{
-			"name":      "my-svc",
-			"namespace": nsName,
-			"selector": map[string]any{
-				"app.kubernetes.io/name": "myapp",
-			},
-			"port": float64(80),
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if errMsg, ok := result["error"].(string); ok {
-			t.Fatalf("tool returned error: %s", errMsg)
-		}
-
-		if result["action"] != "created" {
-			t.Errorf("expected action 'created', got %v", result["action"])
-		}
-
-		// Verify in cluster
-		svc, err := clientset.CoreV1().Services(nsName).Get(t.Context(), "my-svc", metav1.GetOptions{})
-		if err != nil {
-			t.Fatalf("failed to get service: %v", err)
-		}
-
-		if svc.Spec.Type != corev1.ServiceTypeClusterIP {
-			t.Errorf("expected ClusterIP type, got %v", svc.Spec.Type)
-		}
-	})
-
-	t.Run("creates NodePort service", func(t *testing.T) {
-		result, err := tool.Run(nil, map[string]any{
-			"name":      "nodeport-svc",
-			"namespace": nsName,
-			"selector": map[string]any{
-				"app": "test",
-			},
-			"port": float64(80),
-			"type": "NodePort",
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if errMsg, ok := result["error"].(string); ok {
-			t.Fatalf("tool returned error: %s", errMsg)
-		}
-
-		svc, _ := clientset.CoreV1().Services(nsName).Get(t.Context(), "nodeport-svc", metav1.GetOptions{})
-		if svc.Spec.Type != corev1.ServiceTypeNodePort {
-			t.Errorf("expected NodePort type, got %v", svc.Spec.Type)
-		}
-	})
-
-	t.Run("validates required parameters", func(t *testing.T) {
-		result, _ := tool.Run(nil, map[string]any{
-			"namespace": nsName,
-			"selector":  map[string]any{"app": "test"},
-			"port":      float64(80),
-		})
-		if _, ok := result["error"]; !ok {
-			t.Error("expected error when name is missing")
-		}
-	})
-}
-
 // TestManifestTools tests list_manifests, read_manifest, and commit_manifests tools.
 func TestManifestTools(t *testing.T) {
 	mgr := newTestManifestManager(t)
@@ -752,15 +536,26 @@ func TestDeleteManifestTool(t *testing.T) {
 
 	t.Run("deletes single manifest", func(t *testing.T) {
 		// Create a deployment in cluster and manifest
-		createTool := NewCreateDeploymentTool(clientset, mgr)
-		_, err := createTool.Run(nil, map[string]any{
-			"name":      "to-delete",
-			"namespace": nsName,
-			"image":     "nginx:1.25",
-		})
-		if err != nil {
-			t.Fatalf("failed to create deployment: %v", err)
-		}
+		createTestDeployment(t, clientset, nsName, "to-delete")
+		validManifest := `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: to-delete
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: to-delete
+  template:
+    metadata:
+      labels:
+        app: to-delete
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.25
+`
+		writeTestManifest(t, mgr, nsName, "to-delete", "deployment", validManifest)
 
 		result, err := tool.Run(nil, map[string]any{
 			"namespace":           nsName,
@@ -937,7 +732,7 @@ func TestDryRunApplyTool(t *testing.T) {
 	createTestNamespace(t, clientset, nsName)
 	mgr := newTestManifestManager(t)
 
-	tool := NewDryRunApplyTool(clientset, mgr)
+	tool := NewDryRunApplyTool(clientset, dynamicClient, mgr)
 
 	t.Run("validates correct manifest", func(t *testing.T) {
 		// Create a valid deployment manifest
@@ -1174,19 +969,12 @@ func TestDeleteResourceTool(t *testing.T) {
 	})
 
 	t.Run("also deletes manifest when requested", func(t *testing.T) {
-		// Create deployment with manifest
-		createTool := NewCreateDeploymentTool(clientset, mgr)
-		_, err := createTool.Run(nil, map[string]any{
-			"name":      "with-manifest",
-			"namespace": nsName,
-			"image":     "nginx:1.25",
-		})
-		if err != nil {
-			t.Fatalf("failed to create deployment: %v", err)
-		}
+		// Create deployment in cluster and save manifest
+		createTestDeployment(t, clientset, nsName, "with-manifest")
+		writeTestManifest(t, mgr, nsName, "with-manifest", "deployment", "apiVersion: apps/v1\nkind: Deployment")
 
 		// Verify manifest exists
-		_, err = mgr.ReadManifest(nsName, "with-manifest", "deployment")
+		_, err := mgr.ReadManifest(nsName, "with-manifest", "deployment")
 		if err != nil {
 			t.Fatalf("expected manifest to exist: %v", err)
 		}
@@ -1341,18 +1129,12 @@ func TestKubeToolsAll(t *testing.T) {
 
 	expectedTools := []string{
 		"list_namespaces",
-		"create_namespace",
 		"delete_namespace",
 		"list_pods",
 		"get_logs",
 		"get_events",
 		"get_resource",
 		"get_reference",
-		"create_deployment",
-		"create_service",
-		"create_configmap",
-		"create_secret",
-		"create_ingress",
 		"check_deployment_health",
 		"commit_manifests",
 		"list_manifests",

@@ -20,7 +20,7 @@ func TestSetPendingPlan(t *testing.T) {
 	plan := &Plan{
 		Description: "deploy nginx",
 		Actions: []PlannedAction{
-			{Tool: "create_deployment", Reason: "create nginx deployment"},
+			{Tool: "apply_resource", Reason: "create nginx deployment"},
 		},
 	}
 	s.SetPendingPlan(plan)

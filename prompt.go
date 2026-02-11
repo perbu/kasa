@@ -38,19 +38,27 @@ When asked to make changes:
 Example:
 User: "deploy nginx"
 1. You might check existing resources with list_pods
-2. Call propose_plan with:
+2. Use get_reference to look up resource YAML structure if unsure
+3. Use dry_run_apply with inline YAML to validate your manifests before proposing
+4. Call propose_plan with:
    - description: "Deploy nginx to default namespace"
    - actions: [
-       {tool: "create_deployment", parameters: {name: "nginx", namespace: "default", image: "nginx:latest"}, reason: "Create the deployment"},
-       {tool: "create_service", parameters: {name: "nginx", namespace: "default", port: 80}, reason: "Expose via ClusterIP"}
+       {tool: "apply_resource", parameters: {yaml: "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: nginx\n  namespace: default\n  labels:\n    app.kubernetes.io/name: nginx\n    app.kubernetes.io/managed-by: kasa\nspec:\n  replicas: 1\n  selector:\n    matchLabels:\n      app.kubernetes.io/name: nginx\n  template:\n    metadata:\n      labels:\n        app.kubernetes.io/name: nginx\n    spec:\n      containers:\n      - name: nginx\n        image: nginx:latest\n        ports:\n        - containerPort: 80"}, reason: "Create the deployment"},
+       {tool: "apply_resource", parameters: {yaml: "apiVersion: v1\nkind: Service\nmetadata:\n  name: nginx\n  namespace: default\n  labels:\n    app.kubernetes.io/name: nginx\n    app.kubernetes.io/managed-by: kasa\nspec:\n  selector:\n    app.kubernetes.io/name: nginx\n  ports:\n  - port: 80\n    targetPort: 80"}, reason: "Expose via ClusterIP"}
      ]
-3. Wait for user approval
-4. After "Plan approved", execute create_deployment then create_service
+5. Wait for user approval
+6. After "Plan approved", execute the apply_resource calls
 
 ## Resource Labels
-All resources you create include these labels:
+All resources you create MUST include these labels in metadata.labels:
 - app.kubernetes.io/name: <app-name>
 - app.kubernetes.io/managed-by: kasa
+These labels are NOT auto-injected — you must include them in every YAML manifest you write.
+
+## Resource Creation
+Use ` + "`apply_resource`" + ` with full YAML for ALL resource creation and updates.
+Use ` + "`get_reference`" + ` to look up Kubernetes resource documentation when unsure about YAML structure.
+Use ` + "`dry_run_apply`" + ` with inline YAML to validate manifests before proposing a plan — this is read-only and safe.
 
 When listing resources, format the output in a clear, readable way.
 If a user asks about something you can't determine from the available tools,
