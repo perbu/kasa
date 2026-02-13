@@ -393,6 +393,33 @@ func (m *Manager) Push() error {
 	return nil
 }
 
+// StagedChangeCount returns the number of staged files in the git index.
+// Returns 0 if there are no staged changes or on error.
+func (m *Manager) StagedChangeCount() int {
+	cmd := exec.Command("git", "diff", "--cached", "--name-only")
+	cmd.Dir = m.baseDir
+	output, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+	text := strings.TrimSpace(string(output))
+	if text == "" {
+		return 0
+	}
+	return len(strings.Split(text, "\n"))
+}
+
+// StagedDiff returns the full diff of staged changes.
+func (m *Manager) StagedDiff() (string, error) {
+	cmd := exec.Command("git", "diff", "--cached")
+	cmd.Dir = m.baseDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git diff --cached failed: %w\nOutput: %s", err, string(output))
+	}
+	return string(output), nil
+}
+
 // ManifestExists checks if a manifest file already exists.
 func (m *Manager) ManifestExists(namespace, app, resourceType string) bool {
 	path := filepath.Join(m.baseDir, namespace, app, resourceType+".yaml")

@@ -163,7 +163,7 @@ func main() {
 	}
 
 	// Create REPL instance
-	replInstance := repl.New(r, sessionService, *debug)
+	replInstance := repl.New(r, sessionService, *debug, manifestMgr, apiKey, cfg.Agent.Model)
 
 	// Non-interactive mode (no approval workflow - runs directly)
 	if !isInteractive {

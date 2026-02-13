@@ -1253,25 +1253,6 @@ func TestSyncManifestsTool(t *testing.T) {
 	})
 }
 
-// TestPushManifestsTool tests the push_manifests tool.
-func TestPushManifestsTool(t *testing.T) {
-	mgr := newTestManifestManager(t)
-	tool := NewPushManifestsTool(mgr)
-
-	t.Run("returns error when no remote configured", func(t *testing.T) {
-		result, err := tool.Run(nil, nil)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result["success"] != false {
-			t.Error("expected failure when no remote")
-		}
-		if result["error"] != "no git remote configured" {
-			t.Errorf("expected 'no git remote configured', got: %v", result["error"])
-		}
-	})
-}
-
 // TestApplyManifestToolServicePath tests the apply_manifest service path.
 func TestApplyManifestToolServicePath(t *testing.T) {
 	nsName := "test-apply-svc"

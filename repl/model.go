@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/perbu/kasa/manifest"
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
@@ -37,6 +38,11 @@ type model struct {
 	sessionCounter int
 	debug          bool
 	mdRenderer     *glamour.TermRenderer
+
+	// manifest management
+	manifest  *manifest.Manager
+	apiKey    string
+	modelName string
 
 	// agent execution state
 	agentBusy   bool
@@ -70,7 +76,10 @@ var statusStyle = lipgloss.NewStyle().Faint(true)
 // separatorStyle is the dim style for the horizontal rule between turns.
 var separatorStyle = lipgloss.NewStyle().Faint(true)
 
-func newModel(r *runner.Runner, ss session.Service, debug bool) model {
+// uncommittedStyle is the style for the uncommitted changes indicator.
+var uncommittedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Faint(true)
+
+func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, modelName string) model {
 	ta := textarea.New()
 	ta.Placeholder = "Type a message..."
 	ta.Prompt = "> "
@@ -118,6 +127,9 @@ func newModel(r *runner.Runner, ss session.Service, debug bool) model {
 		sessionCounter: 1,
 		debug:          debug,
 		mdRenderer:     md,
+		manifest:       manifest,
+		apiKey:         apiKey,
+		modelName:      modelName,
 		eventCh:        make(chan agentEventMsg, 64),
 	}
 }
@@ -260,6 +272,19 @@ func (m model) View() string {
 		sb.WriteString("\n")
 	}
 
+	// Uncommitted changes indicator when idle
+	if !m.agentBusy && m.manifest != nil {
+		if n := m.manifest.StagedChangeCount(); n > 0 {
+			label := fmt.Sprintf("[%d uncommitted manifest change", n)
+			if n != 1 {
+				label += "s"
+			}
+			label += "]"
+			sb.WriteString(uncommittedStyle.Render(label))
+			sb.WriteString("\n")
+		}
+	}
+
 	// Textarea (input area)
 	sb.WriteString(m.textarea.View())
 
@@ -330,6 +355,15 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 			cmds = append(cmds, tea.Println("No pending plan."))
 		}
 		return m, tea.Batch(cmds...)
+
+	case "/commit":
+		return m.handleCommit(cmds)
+
+	case "/push":
+		return m.handlePush(cmds)
+
+	case "/status":
+		return m.handleStatus(cmds)
 
 	case "/dump":
 		ctx := context.Background()
@@ -545,6 +579,198 @@ func (m model) handleClarificationCancel() (tea.Model, tea.Cmd) {
 	}
 	m.updatePrompt()
 	return m, tea.Batch(cmds...)
+}
+
+// handleCommit implements the /commit command.
+func (m model) handleCommit(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	if m.manifest == nil {
+		cmds = append(cmds, tea.Println("No manifest manager configured."))
+		return m, tea.Batch(cmds...)
+	}
+
+	if m.manifest.StagedChangeCount() == 0 {
+		cmds = append(cmds, tea.Println("No uncommitted changes."))
+		return m, tea.Batch(cmds...)
+	}
+
+	diff, err := m.manifest.StagedDiff()
+	if err != nil {
+		cmds = append(cmds, tea.Println(fmt.Sprintf("Failed to get diff: %v", err)))
+		return m, tea.Batch(cmds...)
+	}
+
+	// Extract conversation context for better commit messages
+	conversationContext := m.extractConversationSummary()
+
+	// Generate commit message via one-shot Gemini call
+	commitMsg, err := m.generateCommitMessage(diff, conversationContext)
+	if err != nil {
+		cmds = append(cmds, tea.Println(fmt.Sprintf("Failed to generate commit message: %v", err)))
+		return m, tea.Batch(cmds...)
+	}
+
+	if err := m.manifest.Commit(commitMsg); err != nil {
+		cmds = append(cmds, tea.Println(fmt.Sprintf("Commit failed: %v", err)))
+		return m, tea.Batch(cmds...)
+	}
+
+	// Show subject line prominently, full message below
+	subject := commitMsg
+	if idx := strings.Index(commitMsg, "\n"); idx >= 0 {
+		subject = commitMsg[:idx]
+	}
+	cmds = append(cmds, tea.Println(fmt.Sprintf("Committed: %s", subject)))
+	if m.manifest.HasRemote() {
+		cmds = append(cmds, tea.Println("Push with /push when ready."))
+	}
+	return m, tea.Batch(cmds...)
+}
+
+// handlePush implements the /push command.
+func (m model) handlePush(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	if m.manifest == nil {
+		cmds = append(cmds, tea.Println("No manifest manager configured."))
+		return m, tea.Batch(cmds...)
+	}
+
+	if !m.manifest.HasRemote() {
+		cmds = append(cmds, tea.Println("No git remote configured."))
+		return m, tea.Batch(cmds...)
+	}
+
+	if err := m.manifest.Push(); err != nil {
+		cmds = append(cmds, tea.Println(fmt.Sprintf("Push failed: %v", err)))
+		return m, tea.Batch(cmds...)
+	}
+
+	cmds = append(cmds, tea.Println("Pushed to remote."))
+	return m, tea.Batch(cmds...)
+}
+
+// handleStatus implements the /status command.
+func (m model) handleStatus(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	if m.manifest == nil {
+		cmds = append(cmds, tea.Println("No manifest manager configured."))
+		return m, tea.Batch(cmds...)
+	}
+
+	status, err := m.manifest.GetStatus()
+	if err != nil {
+		cmds = append(cmds, tea.Println(fmt.Sprintf("Failed to get status: %v", err)))
+		return m, tea.Batch(cmds...)
+	}
+
+	if strings.TrimSpace(status) == "" {
+		cmds = append(cmds, tea.Println("No changes."))
+	} else {
+		cmds = append(cmds, tea.Println(status))
+	}
+	return m, tea.Batch(cmds...)
+}
+
+// generateCommitMessage makes a one-shot Gemini call to generate a commit message from a diff
+// and conversation context. Returns a conventional commit message with subject and body.
+func (m *model) generateCommitMessage(diff, conversationContext string) (string, error) {
+	ctx := context.Background()
+
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey:  m.apiKey,
+		Backend: genai.BackendGeminiAPI,
+	})
+	if err != nil {
+		return "", fmt.Errorf("creating genai client: %w", err)
+	}
+
+	// Truncate very large diffs to avoid excessive token usage
+	const maxDiffLen = 8000
+	truncated := diff
+	if len(truncated) > maxDiffLen {
+		truncated = truncated[:maxDiffLen] + "\n... (truncated)"
+	}
+
+	var prompt string
+	if conversationContext != "" {
+		prompt = fmt.Sprintf(`Generate a git commit message for these Kubernetes manifest changes.
+
+Conversation context (what the user asked for and why):
+%s
+
+Diff:
+%s
+
+Format: A subject line (imperative mood, max 72 chars), then a blank line, then a brief body explaining the intent behind these changes. Do not use markdown formatting. Output the commit message only, nothing else.`, conversationContext, truncated)
+	} else {
+		prompt = fmt.Sprintf(`Generate a git commit message for these Kubernetes manifest changes.
+
+Diff:
+%s
+
+Format: A subject line (imperative mood, max 72 chars), then a blank line, then a brief body describing what changed. Do not use markdown formatting. Output the commit message only, nothing else.`, truncated)
+	}
+
+	resp, err := client.Models.GenerateContent(ctx, m.modelName, []*genai.Content{genai.NewContentFromText(prompt, genai.RoleUser)}, nil)
+	if err != nil {
+		return "", fmt.Errorf("generating commit message: %w", err)
+	}
+
+	if resp == nil || len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil {
+		return "", fmt.Errorf("empty response from model")
+	}
+
+	// Extract text from response
+	for _, part := range resp.Candidates[0].Content.Parts {
+		if part.Text != "" {
+			msg := strings.TrimSpace(part.Text)
+			// Remove any markdown formatting the model might add
+			msg = strings.Trim(msg, "`\"")
+			return msg, nil
+		}
+	}
+
+	return "", fmt.Errorf("no text in model response")
+}
+
+// extractConversationSummary pulls user messages and agent text from the ADK session
+// to provide context for commit message generation.
+func (m *model) extractConversationSummary() string {
+	ctx := context.Background()
+
+	resp, err := m.sessionService.Get(ctx, &session.GetRequest{
+		AppName:   "kasa",
+		UserID:    "user1",
+		SessionID: m.sessionID,
+	})
+	if err != nil {
+		return ""
+	}
+
+	var sb strings.Builder
+	const maxLen = 2000
+
+	for evt := range resp.Session.Events().All() {
+		if evt.Content == nil {
+			continue
+		}
+		for _, part := range evt.Content.Parts {
+			if part.Text == "" {
+				continue
+			}
+			prefix := ""
+			if evt.Author == "user" || evt.Content.Role == "user" {
+				prefix = "User: "
+			} else {
+				prefix = "Agent: "
+			}
+			line := prefix + part.Text + "\n"
+			if sb.Len()+len(line) > maxLen {
+				sb.WriteString("... (truncated)\n")
+				return sb.String()
+			}
+			sb.WriteString(line)
+		}
+	}
+
+	return sb.String()
 }
 
 // renderMarkdown renders text through glamour, falling back to plain text.

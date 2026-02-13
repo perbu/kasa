@@ -494,36 +494,6 @@ func TestManifestTools(t *testing.T) {
 		}
 	})
 
-	t.Run("commit_manifests", func(t *testing.T) {
-		commitMgr := newTestManifestManager(t)
-		tool := NewCommitManifestsTool(commitMgr)
-
-		// Commit without staged changes should fail
-		result, err := tool.Run(nil, map[string]any{
-			"message": "Test commit",
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if result["success"] != false {
-			t.Error("expected failure when no staged changes")
-		}
-
-		// Add and commit
-		writeTestManifest(t, commitMgr, "default", "app", "deployment", "apiVersion: apps/v1\nkind: Deployment")
-
-		result, err = tool.Run(nil, map[string]any{
-			"message": "Add deployment",
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if result["success"] != true {
-			t.Errorf("expected success, got: %v", result)
-		}
-	})
 }
 
 // TestDeleteManifestTool tests the delete_manifest tool.
@@ -1136,7 +1106,6 @@ func TestKubeToolsAll(t *testing.T) {
 		"get_resource",
 		"get_reference",
 		"check_deployment_health",
-		"commit_manifests",
 		"list_manifests",
 		"read_manifest",
 		"delete_manifest",
@@ -1158,7 +1127,6 @@ func TestKubeToolsAll(t *testing.T) {
 		"get_helm_release",
 		"get_helm_values",
 		"sync_manifests",
-		"push_manifests",
 	}
 
 	if len(tools) != len(expectedTools) {

@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"golang.org/x/term"
+	"github.com/perbu/kasa/manifest"
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
@@ -20,14 +21,20 @@ type REPL struct {
 	runner         *runner.Runner
 	sessionService session.Service
 	debug          bool
+	manifest       *manifest.Manager
+	apiKey         string
+	modelName      string
 }
 
 // New creates a new REPL instance.
-func New(r *runner.Runner, ss session.Service, debug bool) *REPL {
+func New(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, modelName string) *REPL {
 	return &REPL{
 		runner:         r,
 		sessionService: ss,
 		debug:          debug,
+		manifest:       manifest,
+		apiKey:         apiKey,
+		modelName:      modelName,
 	}
 }
 
@@ -39,7 +46,7 @@ func (r *REPL) Run(ctx context.Context) error {
 	// late end up in stdin and get interpreted as user input by bubbletea.
 	drainStdin()
 
-	m := newModel(r.runner, r.sessionService, r.debug)
+	m := newModel(r.runner, r.sessionService, r.debug, r.manifest, r.apiKey, r.modelName)
 	p := tea.NewProgram(m, tea.WithContext(ctx))
 	_, err := p.Run()
 	return err
@@ -138,7 +145,7 @@ func (r *REPL) PrintWelcome(version, model string, toolCount int, deploymentsDir
 | Tools | %d |
 | Deployments | %s |
 
-Commands: **EXECUTE**/**ABORT** to approve/reject plans, **exit** to quit.
+Commands: **EXECUTE**/**ABORT** to approve/reject plans, **/commit** **/push** **/status** for manifests, **exit** to quit.
 `, model, toolCount, deploymentsDir)
 
 	renderer, err := setupMarkdownRenderer()
