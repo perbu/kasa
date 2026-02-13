@@ -331,6 +331,16 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 
+	case "/dump":
+		ctx := context.Background()
+		path, eventCount, err := dumpSession(ctx, m.sessionService, m.sessionID, m.state)
+		if err != nil {
+			cmds = append(cmds, tea.Println(fmt.Sprintf("Dump failed: %v", err)))
+		} else {
+			cmds = append(cmds, tea.Println(fmt.Sprintf("Session dumped to %s (%d events)", path, eventCount)))
+		}
+		return m, tea.Batch(cmds...)
+
 	case "/clear":
 		ctx := context.Background()
 		// Delete old session
