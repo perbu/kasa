@@ -10,7 +10,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.5
 	github.com/charmbracelet/x/exp/teatest v0.0.0-20260209194814-eeb2896ac759
 	golang.org/x/term v0.37.0
-	google.golang.org/adk v0.3.0
+	google.golang.org/adk v0.4.0
 	google.golang.org/genai v1.42.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.35.0

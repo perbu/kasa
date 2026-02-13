@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,10 +92,17 @@ func main() {
 
 	ctx := context.Background()
 
-	// Create Gemini model for ADK
+	// Create Gemini model for ADK with retry transport for transient errors
 	geminiModel, err := gemini.NewModel(ctx, cfg.Agent.Model, &genai.ClientConfig{
 		APIKey:  apiKey,
 		Backend: genai.BackendGeminiAPI,
+		HTTPClient: &http.Client{
+			Transport: &retryTransport{
+				base:       http.DefaultTransport,
+				maxRetries: 3,
+				debug:      *debug,
+			},
+		},
 	})
 	if err != nil {
 		log.Fatalf("Failed to create Gemini model: %v", err)

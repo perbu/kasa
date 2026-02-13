@@ -434,7 +434,9 @@ func (m *model) startAgent(prompt string) tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.agentCancel = cancel
 
-	ch := m.eventCh
+	// Fresh channel per agent run to avoid stale messages from previous runs.
+	ch := make(chan agentEventMsg, 64)
+	m.eventCh = ch
 
 	go func() {
 		defer func() {
@@ -468,6 +470,7 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		m.agentBusy = false
 		m.agentCancel = nil
+		m.state.PendingClarification = nil // clear stale clarification from partial run
 		cmds = append(cmds, m.textarea.Focus())
 		m.updatePrompt()
 		cmds = append(cmds, tea.Println(fmt.Sprintf("Error: %v", msg.err)))
