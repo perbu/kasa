@@ -2,6 +2,7 @@ package repl
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -78,6 +79,9 @@ var separatorStyle = lipgloss.NewStyle().Faint(true)
 
 // uncommittedStyle is the style for the uncommitted changes indicator.
 var uncommittedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Faint(true)
+
+// debugStyle is the dim gray style for debug output lines.
+var debugStyle = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("8"))
 
 func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, modelName string) model {
 	ta := textarea.New()
@@ -511,6 +515,13 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 		return m, waitForAgent(m.eventCh)
 	}
 
+	// Print debug lines when debug mode is enabled
+	if m.debug {
+		for _, line := range formatDebugLines(event) {
+			cmds = append(cmds, tea.Println(line))
+		}
+	}
+
 	// Update token counts
 	if event.UsageMetadata != nil {
 		m.inputTokens = event.UsageMetadata.PromptTokenCount
@@ -838,6 +849,55 @@ func (m model) separatorWidth() int {
 		w = 80
 	}
 	return w
+}
+
+// formatDebugLines returns styled debug lines for an agent event.
+func formatDebugLines(event *session.Event) []string {
+	var lines []string
+
+	if event.Author != "" || event.UsageMetadata != nil {
+		var parts []string
+		if event.Author != "" {
+			parts = append(parts, fmt.Sprintf("author=%s", event.Author))
+		}
+		if event.UsageMetadata != nil {
+			parts = append(parts, fmt.Sprintf("tokens=[%d↑ %d↓]",
+				event.UsageMetadata.PromptTokenCount,
+				event.UsageMetadata.CandidatesTokenCount))
+		}
+		lines = append(lines, debugStyle.Render("[debug] event: "+strings.Join(parts, " ")))
+	}
+
+	if event.Content == nil {
+		return lines
+	}
+
+	for _, part := range event.Content.Parts {
+		if part.FunctionCall != nil {
+			argsJSON, err := json.Marshal(part.FunctionCall.Args)
+			if err != nil {
+				argsJSON = []byte("{...}")
+			}
+			lines = append(lines, debugStyle.Render(
+				fmt.Sprintf("[debug] → tool: %s %s", part.FunctionCall.Name, argsJSON)))
+		}
+
+		if part.FunctionResponse != nil {
+			result := fmt.Sprintf("%v", part.FunctionResponse.Response)
+			if len(result) > 200 {
+				result = result[:200] + "..."
+			}
+			lines = append(lines, debugStyle.Render(
+				fmt.Sprintf("[debug] ← tool: %s %s", part.FunctionResponse.Name, result)))
+		}
+
+		if part.Text != "" {
+			lines = append(lines, debugStyle.Render(
+				fmt.Sprintf("[debug] text: %d chars", len(part.Text))))
+		}
+	}
+
+	return lines
 }
 
 // extractReason gets the "reason" field from tool call args.
