@@ -326,7 +326,7 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 
 	// Handle plan approval commands
 	switch strings.ToLower(input) {
-	case "execute", "/approve":
+	case "/approve":
 		if m.state.HasPendingPlan() {
 			plan := m.state.ApprovePlan()
 			cmds = append(cmds, tea.Println("Plan approved. Executing..."))
@@ -338,7 +338,7 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 		cmds = append(cmds, tea.Println("No pending plan to approve."))
 		return m, tea.Batch(cmds...)
 
-	case "abort", "/reject":
+	case "/abort", "/reject":
 		if m.state.HasPendingPlan() {
 			m.state.RejectPlan()
 			cmds = append(cmds, tea.Println("Plan rejected."))
@@ -375,6 +375,15 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 
+	case "/debug":
+		m.debug = !m.debug
+		if m.debug {
+			cmds = append(cmds, tea.Println("Debug mode enabled."))
+		} else {
+			cmds = append(cmds, tea.Println("Debug mode disabled."))
+		}
+		return m, tea.Batch(cmds...)
+
 	case "/clear":
 		ctx := context.Background()
 		// Delete old session
@@ -402,7 +411,7 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 
 	// If there's a pending plan, warn
 	if m.state.HasPendingPlan() {
-		cmds = append(cmds, tea.Println("You have a pending plan. Type EXECUTE to approve, ABORT to reject, or /plan to review."))
+		cmds = append(cmds, tea.Println("You have a pending plan. Type /approve to approve, /abort to reject, or /plan to review."))
 		return m, tea.Batch(cmds...)
 	}
 

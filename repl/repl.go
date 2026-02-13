@@ -145,7 +145,7 @@ func (r *REPL) PrintWelcome(version, model string, toolCount int, deploymentsDir
 | Tools | %d |
 | Deployments | %s |
 
-Commands: **EXECUTE**/**ABORT** to approve/reject plans, **/commit** **/push** **/status** for manifests, **exit** to quit.
+Commands: **/approve** **/abort** plans · **/commit** **/push** **/status** manifests · **/debug** **/dump** **/clear** · **exit**
 `, model, toolCount, deploymentsDir)
 
 	renderer, err := setupMarkdownRenderer()

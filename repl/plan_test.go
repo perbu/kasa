@@ -122,8 +122,8 @@ func TestBuildPlanMarkdown(t *testing.T) {
 	if !strings.Contains(md, "create nginx") {
 		t.Error("expected reason in markdown")
 	}
-	if !strings.Contains(md, "EXECUTE") {
-		t.Error("expected EXECUTE command in markdown")
+	if !strings.Contains(md, "/approve") {
+		t.Error("expected /approve command in markdown")
 	}
 }
 
