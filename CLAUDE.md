@@ -257,6 +257,20 @@ deleted, _ := manager.DeleteManifest("default", "nginx", "deployment")
 manager.Commit("Deploy nginx to default namespace")
 ```
 
+## Future: ADK Tool Confirmation
+
+ADK v0.4.0 added built-in Human-in-the-Loop tool confirmation (`tool/toolconfirmation` package). This overlaps with kasa's custom plan/approval workflow but operates at a **per-tool-call** level rather than batch plan approval. Three modes:
+
+1. `functiontool.Config{RequireConfirmation: true}` — always confirm before execution
+2. `RequireConfirmationProvider: func(args T) bool` — conditional confirmation
+3. Manual `ctx.ToolConfirmation()` / `ctx.RequestConfirmation()` — full control inside `Run()`
+
+The wire protocol uses a special `adk_request_confirmation` FunctionCall event; the client responds with a FunctionResponse containing `{"confirmed": bool, "payload": ...}`.
+
+Kasa currently uses a higher-level abstraction (batch plan approval via `propose_plan` tool + `/approve` REPL command). Migrating to ADK's built-in confirmation could simplify the implementation but would change the UX from "approve a plan" to "approve each tool call individually". Consider whether a hybrid approach makes sense.
+
+See `examples/toolconfirmation/main.go` in the ADK repo for a full Go example.
+
 ## Dependencies
 
 - `google.golang.org/adk` - Agent Development Kit (runner, session, tool interfaces)
