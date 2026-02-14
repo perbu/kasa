@@ -93,8 +93,14 @@ func (t *ListManifestsTool) Run(ctx tool.Context, args any) (map[string]any, err
 		}, nil
 	}
 
-	return map[string]any{
+	result := map[string]any{
 		"manifests": manifests,
 		"count":     len(manifests),
-	}, nil
+	}
+
+	if notes := t.manifest.ReadNotes(namespace, app); notes != "" {
+		result["notes"] = notes
+	}
+
+	return result, nil
 }

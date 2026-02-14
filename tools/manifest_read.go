@@ -113,8 +113,14 @@ func (t *ReadManifestTool) Run(ctx tool.Context, args any) (map[string]any, erro
 
 	relPath := filepath.Join(namespace, app, resourceType+".yaml")
 
-	return map[string]any{
+	result := map[string]any{
 		"content": string(content),
 		"path":    relPath,
-	}, nil
+	}
+
+	if notes := t.manifest.ReadNotes(namespace, app); notes != "" {
+		result["notes"] = notes
+	}
+
+	return result, nil
 }

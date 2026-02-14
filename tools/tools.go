@@ -66,6 +66,7 @@ func (k *KubeTools) All() []tool.Tool {
 		NewSyncManifestsTool(k.manifest),
 		NewListManifestsTool(k.manifest),
 		NewReadManifestTool(k.manifest),
+		NewSaveNotesTool(k.manifest),
 		NewDeleteManifestTool(k.clientset, k.manifest),
 		NewDeleteResourceTool(k.clientset, k.dynamicClient, k.manifest),
 		NewImportResourceTool(k.clientset, k.dynamicClient, k.manifest),

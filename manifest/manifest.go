@@ -427,6 +427,65 @@ func (m *Manager) ManifestExists(namespace, app, resourceType string) bool {
 	return err == nil
 }
 
+// ReadNotes reads KASA.md files at up to three levels (top-level, namespace, app)
+// and returns their concatenated content with level headers.
+// Missing files are silently skipped. Returns empty string if no notes exist.
+func (m *Manager) ReadNotes(namespace, app string) string {
+	var sections []string
+
+	// Top-level notes
+	if content, err := os.ReadFile(filepath.Join(m.baseDir, "KASA.md")); err == nil {
+		sections = append(sections, "## Deployment Notes (top-level)\n"+string(content))
+	}
+
+	// Namespace-level notes
+	if namespace != "" {
+		if content, err := os.ReadFile(filepath.Join(m.baseDir, namespace, "KASA.md")); err == nil {
+			sections = append(sections, fmt.Sprintf("## Deployment Notes (%s)\n%s", namespace, string(content)))
+		}
+	}
+
+	// App-level notes
+	if namespace != "" && app != "" {
+		if content, err := os.ReadFile(filepath.Join(m.baseDir, namespace, app, "KASA.md")); err == nil {
+			sections = append(sections, fmt.Sprintf("## Deployment Notes (%s/%s)\n%s", namespace, app, string(content)))
+		}
+	}
+
+	return strings.Join(sections, "\n\n")
+}
+
+// SaveNotes writes a KASA.md file at the appropriate level and stages it with git.
+// If both namespace and app are empty, writes top-level. If only app is empty, writes namespace-level.
+// If both are set, writes app-level.
+// Returns the file path.
+func (m *Manager) SaveNotes(namespace, app, content string) (string, error) {
+	var dir string
+	switch {
+	case namespace == "" && app == "":
+		dir = m.baseDir
+	case app == "":
+		dir = filepath.Join(m.baseDir, namespace)
+	default:
+		dir = filepath.Join(m.baseDir, namespace, app)
+	}
+
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("creating directory for notes: %w", err)
+	}
+
+	path := filepath.Join(dir, "KASA.md")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		return "", fmt.Errorf("writing notes file: %w", err)
+	}
+
+	if err := m.stageFile(path); err != nil {
+		return "", fmt.Errorf("staging notes file: %w", err)
+	}
+
+	return path, nil
+}
+
 // DeleteNamespace deletes all manifests for a namespace and stages the deletions.
 // Returns the list of deleted file paths.
 func (m *Manager) DeleteNamespace(namespace string) ([]string, error) {

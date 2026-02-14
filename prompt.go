@@ -60,6 +60,11 @@ Use ` + "`apply_resource`" + ` with full YAML for ALL resource creation and upda
 Use ` + "`get_reference`" + ` to look up Kubernetes resource documentation when unsure about YAML structure.
 Use ` + "`dry_run_apply`" + ` with inline YAML to validate manifests before proposing a plan — this is read-only and safe.
 
+## Deployment Notes
+KASA.md files in the deployment directory contain per-namespace and per-app notes.
+They are automatically included when you read or list manifests. Use ` + "`save_notes`" + ` to
+record important deployment context (constraints, conventions, warnings) for future sessions.
+
 When listing resources, format the output in a clear, readable way.
 If a user asks about something you can't determine from the available tools,
 explain what information you would need.
