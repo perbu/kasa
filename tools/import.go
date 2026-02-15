@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/perbu/kasa/manifest"
@@ -131,17 +130,12 @@ func (t *ImportResourceTool) Run(ctx tool.Context, args any) (map[string]any, er
 		overwrite = ow
 	}
 
-	// Normalize kind - first check if it's a known core type
-	resourceType := normalizeKind(kind)
-	useDynamic := false
+	// Normalize kind
+	resourceType := NormalizeKindName(kind)
+	useDynamic := !isCoreTool(resourceType)
 
-	if resourceType == "" {
-		// Check if it's a known CRD kind from our GVR table
-		normalized := NormalizeKindName(kind)
-		if _, found := LookupGVR(normalized); found || apiVersion != "" {
-			resourceType = normalized
-			useDynamic = true
-		} else {
+	if useDynamic {
+		if _, found := LookupGVR(resourceType); !found && apiVersion == "" {
 			return map[string]any{
 				"error": fmt.Sprintf("unsupported resource kind: %s. Provide api_version for custom resources.", kind),
 			}, nil
@@ -203,24 +197,6 @@ func (t *ImportResourceTool) Run(ctx tool.Context, args any) (map[string]any, er
 	}
 
 	return result, nil
-}
-
-// normalizeKind converts kind aliases to canonical names.
-func normalizeKind(kind string) string {
-	switch strings.ToLower(kind) {
-	case "deployment", "deployments", "deploy":
-		return "deployment"
-	case "service", "services", "svc":
-		return "service"
-	case "configmap", "configmaps", "cm":
-		return "configmap"
-	case "secret", "secrets":
-		return "secret"
-	case "ingress", "ingresses", "ing":
-		return "ingress"
-	default:
-		return ""
-	}
 }
 
 // fetchResource fetches a resource from the cluster and converts it to a map.

@@ -214,12 +214,7 @@ func (t *DryRunApplyTool) runStoredManifest(argsMap map[string]any) (map[string]
 		return map[string]any{"error": "type is required"}, nil
 	}
 
-	resourceType = normalizeKind(resourceType)
-	if resourceType == "" {
-		return map[string]any{
-			"error": "unsupported resource type. Supported: deployment, service, configmap, secret, ingress",
-		}, nil
-	}
+	resourceType = NormalizeKindName(resourceType)
 
 	content, err := t.manifest.ReadManifest(namespace, app, resourceType)
 	if err != nil {

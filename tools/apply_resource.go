@@ -195,6 +195,9 @@ func (t *ApplyResourceTool) Run(ctx tool.Context, args any) (map[string]any, err
 		// Resource exists, update it
 		// Preserve the resourceVersion for optimistic concurrency
 		obj.SetResourceVersion(existing.GetResourceVersion())
+		if strings.EqualFold(gvk.Kind, "Service") {
+			preserveServiceFields(existing, obj)
+		}
 		resultObj, err = resourceClient.Update(timeoutCtx, obj, updateOptions)
 		if err != nil {
 			return map[string]any{"error": fmt.Sprintf("failed to update %s: %v", gvk.Kind, err)}, nil
@@ -242,4 +245,23 @@ func (t *ApplyResourceTool) Run(ctx tool.Context, args any) (map[string]any, err
 	}
 
 	return result, nil
+}
+
+// preserveServiceFields copies immutable Service fields from an existing resource to the new one.
+// This prevents errors when updating Services, since clusterIP/clusterIPs are immutable once assigned.
+func preserveServiceFields(existing, obj *unstructured.Unstructured) {
+	existingSpec, ok := existing.Object["spec"].(map[string]any)
+	if !ok {
+		return
+	}
+	objSpec, ok := obj.Object["spec"].(map[string]any)
+	if !ok {
+		return
+	}
+	if clusterIP, ok := existingSpec["clusterIP"]; ok {
+		objSpec["clusterIP"] = clusterIP
+	}
+	if clusterIPs, ok := existingSpec["clusterIPs"]; ok {
+		objSpec["clusterIPs"] = clusterIPs
+	}
 }

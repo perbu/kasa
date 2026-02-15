@@ -130,17 +130,12 @@ func (t *DeleteResourceTool) Run(ctx tool.Context, args any) (map[string]any, er
 		deleteManifest = dm
 	}
 
-	// Normalize resource type - first check if it's a known core type
-	normalizedType := normalizeResourceType(resourceType)
-	useDynamic := false
+	// Normalize resource type
+	normalizedType := NormalizeKindName(resourceType)
+	useDynamic := !isCoreTool(normalizedType) && normalizedType != "pod"
 
-	if normalizedType == "" {
-		// Check if it's a known CRD kind from our GVR table
-		normalized := NormalizeKindName(resourceType)
-		if _, found := LookupGVR(normalized); found || apiVersion != "" {
-			normalizedType = normalized
-			useDynamic = true
-		} else {
+	if useDynamic {
+		if _, found := LookupGVR(normalizedType); !found && apiVersion == "" {
 			return map[string]any{
 				"error": fmt.Sprintf("unsupported resource type: %s. Provide api_version for custom resources.", resourceType),
 			}, nil
@@ -185,26 +180,6 @@ func (t *DeleteResourceTool) Run(ctx tool.Context, args any) (map[string]any, er
 	}
 
 	return result, nil
-}
-
-// normalizeResourceType converts type aliases to canonical names.
-func normalizeResourceType(resourceType string) string {
-	switch resourceType {
-	case "pod", "pods", "po":
-		return "pod"
-	case "deployment", "deployments", "deploy":
-		return "deployment"
-	case "service", "services", "svc":
-		return "service"
-	case "configmap", "configmaps", "cm":
-		return "configmap"
-	case "secret", "secrets":
-		return "secret"
-	case "ingress", "ingresses", "ing":
-		return "ingress"
-	default:
-		return ""
-	}
 }
 
 // deleteFromCluster deletes a resource from the Kubernetes cluster.

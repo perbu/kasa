@@ -113,6 +113,21 @@ var KindAliases = map[string]string{
 	"horizontalpodautoscalers": "horizontalpodautoscaler",
 }
 
+// coreTypedKinds lists kinds that have typed-client paths in some tools.
+// Used to decide whether to take a typed-client vs dynamic-client code path.
+var coreTypedKinds = map[string]bool{
+	"deployment": true,
+	"service":    true,
+	"configmap":  true,
+	"secret":     true,
+	"ingress":    true,
+}
+
+// isCoreTool returns true if the kind is one of the core typed-client kinds.
+func isCoreTool(kind string) bool {
+	return coreTypedKinds[kind]
+}
+
 // ClusterScopedKinds lists kinds that are cluster-scoped (not namespaced).
 var ClusterScopedKinds = map[string]bool{
 	"namespace":            true,

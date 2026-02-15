@@ -123,12 +123,7 @@ func (t *ApplyManifestTool) Run(ctx tool.Context, args any) (map[string]any, err
 	}
 
 	// Normalize resource type
-	resourceType = normalizeKind(resourceType)
-	if resourceType == "" {
-		return map[string]any{
-			"error": "unsupported resource type. Supported: deployment, service, configmap, secret, ingress",
-		}, nil
-	}
+	resourceType = NormalizeKindName(resourceType)
 
 	// Read manifest from storage
 	content, err := t.manifest.ReadManifest(namespace, app, resourceType)
