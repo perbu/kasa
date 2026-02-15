@@ -185,7 +185,7 @@ func main() {
 	}
 
 	// Interactive REPL mode - print fancy welcome
-	replInstance.PrintWelcome(strings.TrimSpace(version), cfg.Agent.Model, len(kubeTools.All()), manifestMgr.BaseDir(), kubeContext)
+	replInstance.PrintWelcome(strings.TrimSpace(version), cfg.Agent.Model, len(kubeTools.All()), manifestMgr.BaseDir())
 
 	// Display drift scan results to the user
 	if scanResults != nil {

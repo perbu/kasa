@@ -68,6 +68,21 @@ func (m *Manager) Context() string {
 	return m.context
 }
 
+// ListContexts returns the names of all context subdirectories in baseDir.
+func (m *Manager) ListContexts() []string {
+	entries, err := os.ReadDir(m.baseDir)
+	if err != nil {
+		return nil
+	}
+	var contexts []string
+	for _, e := range entries {
+		if e.IsDir() && e.Name() != ".git" {
+			contexts = append(contexts, e.Name())
+		}
+	}
+	return contexts
+}
+
 // contextDir returns the context-scoped directory: baseDir/context.
 // All file operations (save, read, list, delete) use this as their root.
 func (m *Manager) contextDir() string {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -133,37 +134,59 @@ func (r *REPL) runAgentSync(ctx context.Context, state *SessionState, prompt str
 }
 
 // PrintWelcome displays the colorized logo and session info.
-func (r *REPL) PrintWelcome(version, model string, toolCount int, deploymentsDir, kubeContext string) {
+func (r *REPL) PrintWelcome(version, model string, toolCount int, deploymentsDir string) {
 	// Colorized ASCII art logo
 	fmt.Print(RenderLogo(version))
 	fmt.Println()
+
+	// Build cluster context list — bold the active one
+	contexts := r.manifest.ListContexts()
+	activeCtx := r.manifest.Context()
+	contextDisplay := formatContextList(contexts, activeCtx)
 
 	// Session info rendered as markdown
 	info := fmt.Sprintf(`| Setting | Value |
 |---------|-------|
 | Model | %s |
 | Tools | %d |
-| Context | %s |
+| Clusters | %s |
 | Deployments | %s |
 
 Commands: **/approve** **/abort** plans · **/commit** **/push** **/status** manifests · **/debug** **/dump** **/clear** · **exit**
-`, model, toolCount, kubeContext, deploymentsDir)
+`, model, toolCount, contextDisplay, deploymentsDir)
 
 	renderer, err := setupMarkdownRenderer()
 	if err != nil {
-		fmt.Printf("Model: %s | Tools: %d | Context: %s | Deployments: %s\n", model, toolCount, kubeContext, deploymentsDir)
+		fmt.Printf("Model: %s | Tools: %d | Context: %s | Deployments: %s\n", model, toolCount, activeCtx, deploymentsDir)
 		fmt.Printf("Type 'exit' or 'quit' to exit.\n\n")
 		return
 	}
 
 	rendered, err := renderer.Render(info)
 	if err != nil {
-		fmt.Printf("Model: %s | Tools: %d | Context: %s | Deployments: %s\n", model, toolCount, kubeContext, deploymentsDir)
+		fmt.Printf("Model: %s | Tools: %d | Context: %s | Deployments: %s\n", model, toolCount, activeCtx, deploymentsDir)
 		fmt.Printf("Type 'exit' or 'quit' to exit.\n\n")
 		return
 	}
 
 	fmt.Print(rendered)
+}
+
+// formatContextList formats cluster contexts for display.
+// The active context is bolded; others are listed plain.
+func formatContextList(contexts []string, active string) string {
+	if len(contexts) == 0 {
+		return "**" + active + "**"
+	}
+	var parts []string
+	for _, ctx := range contexts {
+		if ctx == active {
+			parts = append(parts, "**"+ctx+"**")
+		} else {
+			parts = append(parts, ctx)
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 // setupMarkdownRenderer creates a glamour renderer configured for the terminal.
