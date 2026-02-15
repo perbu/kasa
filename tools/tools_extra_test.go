@@ -35,7 +35,7 @@ func TestIsMutating(t *testing.T) {
 // TestReadOnlyTools tests that ReadOnlyTools returns only read-only tools.
 func TestReadOnlyTools(t *testing.T) {
 	mgr := newTestManifestManager(t)
-	kt := NewKubeTools(clientset, dynamicClient, mgr, "", "")
+	kt := NewKubeTools(clientset, dynamicClient, mgr, "")
 
 	tools := kt.ReadOnlyTools()
 	if len(tools) == 0 {
@@ -57,7 +57,7 @@ func TestReadOnlyTools(t *testing.T) {
 // TestMutatingTools tests that MutatingTools returns only mutating tools.
 func TestMutatingTools(t *testing.T) {
 	mgr := newTestManifestManager(t)
-	kt := NewKubeTools(clientset, dynamicClient, mgr, "", "")
+	kt := NewKubeTools(clientset, dynamicClient, mgr, "")
 
 	tools := kt.MutatingTools()
 	if len(tools) == 0 {
@@ -79,7 +79,7 @@ func TestMutatingTools(t *testing.T) {
 // TestGenerateToolDocs tests that GenerateToolDocs returns non-empty documentation.
 func TestGenerateToolDocs(t *testing.T) {
 	mgr := newTestManifestManager(t)
-	kt := NewKubeTools(clientset, dynamicClient, mgr, "", "")
+	kt := NewKubeTools(clientset, dynamicClient, mgr, "")
 
 	docs := kt.GenerateToolDocs()
 	if docs == "" {

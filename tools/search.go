@@ -13,7 +13,7 @@ import (
 	"google.golang.org/genai"
 )
 
-// SearchWebTool provides the search_web tool for web search via Tavily API.
+// SearchWebTool provides the search_web tool for web search via Jina Search API.
 type SearchWebTool struct {
 	apiKey string
 }
@@ -68,24 +68,24 @@ func (t *SearchWebTool) Declaration() *genai.FunctionDeclaration {
 	}
 }
 
-// tavilyRequest represents the request body for Tavily API.
-type tavilyRequest struct {
-	APIKey      string `json:"api_key"`
-	Query       string `json:"query"`
-	SearchDepth string `json:"search_depth"`
-	MaxResults  int    `json:"max_results"`
+// jinaSearchRequest represents the request body for Jina Search API.
+type jinaSearchRequest struct {
+	Query string `json:"q"`
 }
 
-// tavilyResponse represents the response from Tavily API.
-type tavilyResponse struct {
-	Results []tavilyResult `json:"results"`
+// jinaSearchResponse represents the response from Jina Search API.
+type jinaSearchResponse struct {
+	Code   int                `json:"code"`
+	Status int                `json:"status"`
+	Data   []jinaSearchResult `json:"data"`
 }
 
-// tavilyResult represents a single search result from Tavily.
-type tavilyResult struct {
-	Title   string `json:"title"`
-	URL     string `json:"url"`
-	Content string `json:"content"`
+// jinaSearchResult represents a single search result from Jina.
+type jinaSearchResult struct {
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	URL         string `json:"url"`
+	Content     string `json:"content"`
 }
 
 // Run executes the tool.
@@ -102,15 +102,12 @@ func (t *SearchWebTool) Run(ctx tool.Context, args any) (map[string]any, error) 
 
 	// Check if API key is configured
 	if t.apiKey == "" {
-		return map[string]any{"error": "TAVILY_API_KEY not configured"}, nil
+		return map[string]any{"error": "JINA_API_KEY not configured"}, nil
 	}
 
 	// Create request body
-	reqBody := tavilyRequest{
-		APIKey:      t.apiKey,
-		Query:       query,
-		SearchDepth: "basic",
-		MaxResults:  5,
+	reqBody := jinaSearchRequest{
+		Query: query,
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -119,11 +116,13 @@ func (t *SearchWebTool) Run(ctx tool.Context, args any) (map[string]any, error) 
 	}
 
 	// Create HTTP request
-	req, err := http.NewRequest("POST", "https://api.tavily.com/search", bytes.NewBuffer(jsonBody))
+	req, err := http.NewRequest("POST", "https://s.jina.ai/", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return map[string]any{"error": fmt.Sprintf("failed to create request: %v", err)}, nil
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+t.apiKey)
 
 	// Execute request with timeout
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -145,18 +144,27 @@ func (t *SearchWebTool) Run(ctx tool.Context, args any) (map[string]any, error) 
 	}
 
 	// Parse response
-	var tavilyResp tavilyResponse
-	if err := json.Unmarshal(body, &tavilyResp); err != nil {
+	var jinaResp jinaSearchResponse
+	if err := json.Unmarshal(body, &jinaResp); err != nil {
 		return map[string]any{"error": fmt.Sprintf("failed to parse response: %v", err)}, nil
 	}
 
 	// Convert results to generic format
-	results := make([]map[string]any, 0, len(tavilyResp.Results))
-	for _, r := range tavilyResp.Results {
+	results := make([]map[string]any, 0, len(jinaResp.Data))
+	for _, r := range jinaResp.Data {
+		snippet := r.Description
+		if snippet == "" {
+			snippet = r.Content
+		}
+		// Truncate long content snippets
+		const maxSnippetLen = 500
+		if len(snippet) > maxSnippetLen {
+			snippet = snippet[:maxSnippetLen] + "..."
+		}
 		results = append(results, map[string]any{
 			"title":   r.Title,
 			"url":     r.URL,
-			"snippet": r.Content,
+			"snippet": snippet,
 		})
 	}
 

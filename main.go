@@ -77,12 +77,11 @@ func main() {
 		}
 	}
 
-	// Get API keys for web tools (optional)
+	// Get API key for web tools (optional)
 	jinaAPIKey := cfg.JinaAPIKey()
-	tavilyAPIKey := cfg.TavilyAPIKey()
 
 	// Initialize tools
-	kubeTools := tools.NewKubeTools(clientset, dynamicClient, manifestMgr, jinaAPIKey, tavilyAPIKey)
+	kubeTools := tools.NewKubeTools(clientset, dynamicClient, manifestMgr, jinaAPIKey)
 
 	// Get Google API key
 	apiKey := cfg.GoogleAPIKey()

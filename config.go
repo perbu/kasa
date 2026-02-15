@@ -29,7 +29,6 @@ type Config struct {
 	Credentials struct {
 		GoogleAPIKey string `yaml:"google_api_key"`
 		JinaAPIKey   string `yaml:"jina_api_key"`
-		TavilyAPIKey string `yaml:"tavily_api_key"`
 	} `yaml:"credentials"`
 }
 
@@ -102,16 +101,9 @@ func (c *Config) GoogleAPIKey() string {
 
 // JinaAPIKey returns the Jina API key, preferring the environment variable.
 func (c *Config) JinaAPIKey() string {
-	if v := os.Getenv("JINA_READER_API_KEY"); v != "" {
+	if v := os.Getenv("JINA_API_KEY"); v != "" {
 		return v
 	}
 	return c.Credentials.JinaAPIKey
 }
 
-// TavilyAPIKey returns the Tavily API key, preferring the environment variable.
-func (c *Config) TavilyAPIKey() string {
-	if v := os.Getenv("TAVILY_API_KEY"); v != "" {
-		return v
-	}
-	return c.Credentials.TavilyAPIKey
-}

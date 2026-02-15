@@ -24,9 +24,9 @@ Run `kasa init` to create a config file at `~/.kasa/config.yaml`:
 ```
 
 Edit `~/.kasa/config.yaml` to add your API keys and customize settings. You need a
-Google API key for Gemini. Jina and Tavily keys are optional (for web fetch and search).
+Google API key for Gemini. A Jina key is optional (for web search and URL fetching).
 
-Environment variables (`GOOGLE_API_KEY`, `JINA_READER_API_KEY`, `TAVILY_API_KEY`)
+Environment variables (`GOOGLE_API_KEY`, `JINA_API_KEY`)
 override config file values.
 
 ## Usage

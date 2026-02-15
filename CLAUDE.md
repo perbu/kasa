@@ -20,7 +20,7 @@ go run . -debug -prompt "..."      # With debug output
 
 - `~/.kasa/config.yaml` - All settings: Kubernetes, model, API keys, system prompt
 - Run `kasa init` to create a default config file
-- Environment variables (`GOOGLE_API_KEY`, `JINA_READER_API_KEY`, `TAVILY_API_KEY`) override config file values
+- Environment variables (`GOOGLE_API_KEY`, `JINA_API_KEY`) override config file values
 
 ## Project Structure
 

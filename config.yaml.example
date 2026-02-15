@@ -25,10 +25,8 @@ deployments:
 credentials:
   # Required: Google API key for Gemini (or set GOOGLE_API_KEY env var)
   google_api_key: ""
-  # Optional: Jina Reader API key for web fetching (or set JINA_READER_API_KEY env var)
+  # Optional: Jina API key for web search and URL fetching (or set JINA_API_KEY env var)
   jina_api_key: ""
-  # Optional: Tavily API key for web search (or set TAVILY_API_KEY env var)
-  tavily_api_key: ""
 
 # Prompts for tuning (leave empty for built-in defaults)
 # prompts:

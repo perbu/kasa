@@ -1093,7 +1093,7 @@ func TestGetLogsTool(t *testing.T) {
 // TestKubeToolsAll tests that All() returns all expected tools.
 func TestKubeToolsAll(t *testing.T) {
 	mgr := newTestManifestManager(t)
-	kt := NewKubeTools(clientset, dynamicClient, mgr, "", "")
+	kt := NewKubeTools(clientset, dynamicClient, mgr, "")
 
 	tools := kt.All()
 

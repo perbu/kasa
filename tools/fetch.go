@@ -80,7 +80,7 @@ func (t *FetchUrlTool) Run(ctx tool.Context, args any) (map[string]any, error) {
 
 	// Check if API key is configured
 	if t.apiKey == "" {
-		return map[string]any{"error": "JINA_READER_API_KEY not configured"}, nil
+		return map[string]any{"error": "JINA_API_KEY not configured"}, nil
 	}
 
 	// Create request to Jina Reader API

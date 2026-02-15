@@ -38,17 +38,15 @@ type KubeTools struct {
 	dynamicClient dynamic.Interface
 	manifest      *manifest.Manager
 	jinaAPIKey    string
-	tavilyAPIKey  string
 }
 
-// NewKubeTools creates a new KubeTools instance with the given clientset, dynamic client, manifest manager, and API keys.
-func NewKubeTools(clientset *kubernetes.Clientset, dynamicClient dynamic.Interface, manifest *manifest.Manager, jinaAPIKey, tavilyAPIKey string) *KubeTools {
+// NewKubeTools creates a new KubeTools instance with the given clientset, dynamic client, manifest manager, and Jina API key.
+func NewKubeTools(clientset *kubernetes.Clientset, dynamicClient dynamic.Interface, manifest *manifest.Manager, jinaAPIKey string) *KubeTools {
 	return &KubeTools{
 		clientset:     clientset,
 		dynamicClient: dynamicClient,
 		manifest:      manifest,
 		jinaAPIKey:    jinaAPIKey,
-		tavilyAPIKey:  tavilyAPIKey,
 	}
 }
 
@@ -83,7 +81,7 @@ func (k *KubeTools) All() []tool.Tool {
 		NewWaitForConditionTool(k.clientset, k.dynamicClient),
 		// Web tools
 		NewFetchUrlTool(k.jinaAPIKey),
-		NewSearchWebTool(k.tavilyAPIKey),
+		NewSearchWebTool(k.jinaAPIKey),
 		// HTTP verification tool
 		NewHTTPRequestTool(),
 		// Helm inspection tools
