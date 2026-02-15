@@ -68,7 +68,7 @@ func (k *KubeTools) All() []tool.Tool {
 		NewDeleteManifestTool(k.clientset, k.manifest),
 		NewDeleteResourceTool(k.clientset, k.dynamicClient, k.manifest),
 		NewImportResourceTool(k.clientset, k.dynamicClient, k.manifest),
-		NewApplyManifestTool(k.clientset, k.manifest),
+		NewApplyManifestTool(k.dynamicClient, k.manifest),
 		NewDryRunApplyTool(k.clientset, k.dynamicClient, k.manifest),
 		NewProposePlanTool(),
 		NewAskClarificationTool(),

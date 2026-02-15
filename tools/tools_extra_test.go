@@ -477,7 +477,7 @@ func TestApplyManifestTool(t *testing.T) {
 	createTestNamespace(t, clientset, nsName)
 	mgr := newTestManifestManager(t)
 
-	tool := NewApplyManifestTool(clientset, mgr)
+	tool := NewApplyManifestTool(dynamicClient, mgr)
 
 	t.Run("applies deployment manifest", func(t *testing.T) {
 		manifest := `apiVersion: apps/v1
@@ -1259,7 +1259,7 @@ func TestApplyManifestToolServicePath(t *testing.T) {
 	createTestNamespace(t, clientset, nsName)
 	mgr := newTestManifestManager(t)
 
-	tool := NewApplyManifestTool(clientset, mgr)
+	tool := NewApplyManifestTool(dynamicClient, mgr)
 
 	t.Run("applies service manifest", func(t *testing.T) {
 		manifest := `apiVersion: v1

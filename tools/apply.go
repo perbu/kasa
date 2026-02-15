@@ -4,32 +4,28 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/perbu/kasa/manifest"
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/tool"
 	"google.golang.org/genai"
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-	"sigs.k8s.io/yaml"
+	"k8s.io/client-go/dynamic"
 )
 
 // ApplyManifestTool provides the apply_manifest tool for the agent.
 type ApplyManifestTool struct {
-	clientset *kubernetes.Clientset
-	manifest  *manifest.Manager
+	dynamicClient dynamic.Interface
+	manifest      *manifest.Manager
 }
 
 // NewApplyManifestTool creates a new ApplyManifestTool.
-func NewApplyManifestTool(clientset *kubernetes.Clientset, manifest *manifest.Manager) *ApplyManifestTool {
+func NewApplyManifestTool(dynamicClient dynamic.Interface, manifest *manifest.Manager) *ApplyManifestTool {
 	return &ApplyManifestTool{
-		clientset: clientset,
-		manifest:  manifest,
+		dynamicClient: dynamicClient,
+		manifest:      manifest,
 	}
 }
 
@@ -76,7 +72,7 @@ func (t *ApplyManifestTool) Declaration() *genai.FunctionDeclaration {
 				},
 				"type": {
 					Type:        "string",
-					Description: "The resource type: deployment, service, configmap, secret, ingress",
+					Description: "The resource type (e.g. deployment, service, configmap, secret, ingress, httproute, etc.)",
 				},
 				"dry_run": {
 					Type:        "boolean",
@@ -131,16 +127,74 @@ func (t *ApplyManifestTool) Run(ctx tool.Context, args any) (map[string]any, err
 		return map[string]any{"error": err.Error()}, nil
 	}
 
+	// Parse YAML to unstructured
+	obj, err := ParseYAMLToUnstructured(content)
+	if err != nil {
+		return map[string]any{"error": fmt.Sprintf("invalid YAML: %v", err)}, nil
+	}
+
+	// Set namespace
+	obj.SetNamespace(namespace)
+
+	// Determine GVR from the parsed object
+	gvk := obj.GroupVersionKind()
+	if gvk.Kind == "" {
+		return map[string]any{"error": "manifest YAML must contain a 'kind' field"}, nil
+	}
+	gvr := GVKToGVR(gvk)
+
+	name := obj.GetName()
+	if name == "" {
+		return map[string]any{"error": "manifest YAML must contain metadata.name"}, nil
+	}
+
 	// Apply to cluster
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	action, err := t.applyResource(timeoutCtx, namespace, resourceType, content, dryRun)
+	namespaced := IsNamespaced(gvk.Kind)
+	var resourceClient dynamic.ResourceInterface
+	if namespaced {
+		resourceClient = t.dynamicClient.Resource(gvr).Namespace(namespace)
+	} else {
+		resourceClient = t.dynamicClient.Resource(gvr)
+	}
+
+	createOptions := metav1.CreateOptions{}
+	updateOptions := metav1.UpdateOptions{}
+	if dryRun {
+		createOptions.DryRun = []string{metav1.DryRunAll}
+		updateOptions.DryRun = []string{metav1.DryRunAll}
+	}
+
+	// Try to get existing resource to determine create vs update
+	existing, err := resourceClient.Get(timeoutCtx, name, metav1.GetOptions{})
+	var action string
+
 	if err != nil {
-		return map[string]any{
-			"success": false,
-			"error":   err.Error(),
-		}, nil
+		// Resource doesn't exist, create it
+		_, err = resourceClient.Create(timeoutCtx, obj, createOptions)
+		if err != nil {
+			return map[string]any{
+				"success": false,
+				"error":   fmt.Sprintf("failed to create %s: %v", gvk.Kind, err),
+			}, nil
+		}
+		action = "created"
+	} else {
+		// Resource exists, update it
+		obj.SetResourceVersion(existing.GetResourceVersion())
+		if strings.EqualFold(gvk.Kind, "Service") {
+			preserveServiceFields(existing, obj)
+		}
+		_, err = resourceClient.Update(timeoutCtx, obj, updateOptions)
+		if err != nil {
+			return map[string]any{
+				"success": false,
+				"error":   fmt.Sprintf("failed to update %s: %v", gvk.Kind, err),
+			}, nil
+		}
+		action = "updated"
 	}
 
 	result := map[string]any{
@@ -159,168 +213,4 @@ func (t *ApplyManifestTool) Run(ctx tool.Context, args any) (map[string]any, err
 	}
 
 	return result, nil
-}
-
-// applyResource applies a resource to the cluster.
-func (t *ApplyManifestTool) applyResource(ctx context.Context, namespace, resourceType string, content []byte, dryRun bool) (string, error) {
-	var createOpts metav1.CreateOptions
-	var updateOpts metav1.UpdateOptions
-
-	if dryRun {
-		createOpts.DryRun = []string{metav1.DryRunAll}
-		updateOpts.DryRun = []string{metav1.DryRunAll}
-	}
-
-	switch resourceType {
-	case "deployment":
-		return t.applyDeployment(ctx, namespace, content, createOpts, updateOpts)
-	case "service":
-		return t.applyService(ctx, namespace, content, createOpts, updateOpts)
-	case "configmap":
-		return t.applyConfigMap(ctx, namespace, content, createOpts, updateOpts)
-	case "secret":
-		return t.applySecret(ctx, namespace, content, createOpts, updateOpts)
-	case "ingress":
-		return t.applyIngress(ctx, namespace, content, createOpts, updateOpts)
-	default:
-		return "", fmt.Errorf("unsupported resource type: %s", resourceType)
-	}
-}
-
-func (t *ApplyManifestTool) applyDeployment(ctx context.Context, namespace string, content []byte, createOpts metav1.CreateOptions, updateOpts metav1.UpdateOptions) (string, error) {
-	var deployment appsv1.Deployment
-	if err := yaml.Unmarshal(content, &deployment); err != nil {
-		return "", fmt.Errorf("invalid YAML: %v", err)
-	}
-	deployment.Namespace = namespace
-
-	existing, err := t.clientset.AppsV1().Deployments(namespace).Get(ctx, deployment.Name, metav1.GetOptions{})
-	if err != nil {
-		if !errors.IsNotFound(err) {
-			return "", fmt.Errorf("failed to check existing deployment: %v", err)
-		}
-		_, err = t.clientset.AppsV1().Deployments(namespace).Create(ctx, &deployment, createOpts)
-		if err != nil {
-			return "", fmt.Errorf("failed to create deployment: %v", err)
-		}
-		return "created", nil
-	}
-
-	deployment.ResourceVersion = existing.ResourceVersion
-	_, err = t.clientset.AppsV1().Deployments(namespace).Update(ctx, &deployment, updateOpts)
-	if err != nil {
-		return "", fmt.Errorf("failed to update deployment: %v", err)
-	}
-	return "updated", nil
-}
-
-func (t *ApplyManifestTool) applyService(ctx context.Context, namespace string, content []byte, createOpts metav1.CreateOptions, updateOpts metav1.UpdateOptions) (string, error) {
-	var service corev1.Service
-	if err := yaml.Unmarshal(content, &service); err != nil {
-		return "", fmt.Errorf("invalid YAML: %v", err)
-	}
-	service.Namespace = namespace
-
-	existing, err := t.clientset.CoreV1().Services(namespace).Get(ctx, service.Name, metav1.GetOptions{})
-	if err != nil {
-		if !errors.IsNotFound(err) {
-			return "", fmt.Errorf("failed to check existing service: %v", err)
-		}
-		_, err = t.clientset.CoreV1().Services(namespace).Create(ctx, &service, createOpts)
-		if err != nil {
-			return "", fmt.Errorf("failed to create service: %v", err)
-		}
-		return "created", nil
-	}
-
-	// Preserve ClusterIP for updates
-	service.ResourceVersion = existing.ResourceVersion
-	service.Spec.ClusterIP = existing.Spec.ClusterIP
-	service.Spec.ClusterIPs = existing.Spec.ClusterIPs
-	_, err = t.clientset.CoreV1().Services(namespace).Update(ctx, &service, updateOpts)
-	if err != nil {
-		return "", fmt.Errorf("failed to update service: %v", err)
-	}
-	return "updated", nil
-}
-
-func (t *ApplyManifestTool) applyConfigMap(ctx context.Context, namespace string, content []byte, createOpts metav1.CreateOptions, updateOpts metav1.UpdateOptions) (string, error) {
-	var configmap corev1.ConfigMap
-	if err := yaml.Unmarshal(content, &configmap); err != nil {
-		return "", fmt.Errorf("invalid YAML: %v", err)
-	}
-	configmap.Namespace = namespace
-
-	existing, err := t.clientset.CoreV1().ConfigMaps(namespace).Get(ctx, configmap.Name, metav1.GetOptions{})
-	if err != nil {
-		if !errors.IsNotFound(err) {
-			return "", fmt.Errorf("failed to check existing configmap: %v", err)
-		}
-		_, err = t.clientset.CoreV1().ConfigMaps(namespace).Create(ctx, &configmap, createOpts)
-		if err != nil {
-			return "", fmt.Errorf("failed to create configmap: %v", err)
-		}
-		return "created", nil
-	}
-
-	configmap.ResourceVersion = existing.ResourceVersion
-	_, err = t.clientset.CoreV1().ConfigMaps(namespace).Update(ctx, &configmap, updateOpts)
-	if err != nil {
-		return "", fmt.Errorf("failed to update configmap: %v", err)
-	}
-	return "updated", nil
-}
-
-func (t *ApplyManifestTool) applySecret(ctx context.Context, namespace string, content []byte, createOpts metav1.CreateOptions, updateOpts metav1.UpdateOptions) (string, error) {
-	var secret corev1.Secret
-	if err := yaml.Unmarshal(content, &secret); err != nil {
-		return "", fmt.Errorf("invalid YAML: %v", err)
-	}
-	secret.Namespace = namespace
-
-	existing, err := t.clientset.CoreV1().Secrets(namespace).Get(ctx, secret.Name, metav1.GetOptions{})
-	if err != nil {
-		if !errors.IsNotFound(err) {
-			return "", fmt.Errorf("failed to check existing secret: %v", err)
-		}
-		_, err = t.clientset.CoreV1().Secrets(namespace).Create(ctx, &secret, createOpts)
-		if err != nil {
-			return "", fmt.Errorf("failed to create secret: %v", err)
-		}
-		return "created", nil
-	}
-
-	secret.ResourceVersion = existing.ResourceVersion
-	_, err = t.clientset.CoreV1().Secrets(namespace).Update(ctx, &secret, updateOpts)
-	if err != nil {
-		return "", fmt.Errorf("failed to update secret: %v", err)
-	}
-	return "updated", nil
-}
-
-func (t *ApplyManifestTool) applyIngress(ctx context.Context, namespace string, content []byte, createOpts metav1.CreateOptions, updateOpts metav1.UpdateOptions) (string, error) {
-	var ingress networkingv1.Ingress
-	if err := yaml.Unmarshal(content, &ingress); err != nil {
-		return "", fmt.Errorf("invalid YAML: %v", err)
-	}
-	ingress.Namespace = namespace
-
-	existing, err := t.clientset.NetworkingV1().Ingresses(namespace).Get(ctx, ingress.Name, metav1.GetOptions{})
-	if err != nil {
-		if !errors.IsNotFound(err) {
-			return "", fmt.Errorf("failed to check existing ingress: %v", err)
-		}
-		_, err = t.clientset.NetworkingV1().Ingresses(namespace).Create(ctx, &ingress, createOpts)
-		if err != nil {
-			return "", fmt.Errorf("failed to create ingress: %v", err)
-		}
-		return "created", nil
-	}
-
-	ingress.ResourceVersion = existing.ResourceVersion
-	_, err = t.clientset.NetworkingV1().Ingresses(namespace).Update(ctx, &ingress, updateOpts)
-	if err != nil {
-		return "", fmt.Errorf("failed to update ingress: %v", err)
-	}
-	return "updated", nil
 }
