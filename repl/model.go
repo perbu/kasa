@@ -26,6 +26,11 @@ type agentEventMsg struct {
 	done  bool // true when the agent stream has ended
 }
 
+// cmdResultMsg is sent by async REPL commands (/commit, /push, /status).
+type cmdResultMsg struct {
+	lines []string
+}
+
 // model is the bubbletea Model for the interactive REPL.
 type model struct {
 	textarea textarea.Model
@@ -252,6 +257,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case agentEventMsg:
 		return m.handleAgentEvent(msg)
+
+	case cmdResultMsg:
+		m.agentBusy = false
+		var cmds []tea.Cmd
+		cmds = append(cmds, m.textarea.Focus())
+		for _, line := range msg.lines {
+			cmds = append(cmds, tea.Println(line))
+		}
+		return m, tea.Batch(cmds...)
 	}
 
 	return m, nil
@@ -601,37 +615,47 @@ func (m model) handleCommit(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	}
 
-	diff, err := m.manifest.StagedDiff()
-	if err != nil {
-		cmds = append(cmds, tea.Println(fmt.Sprintf("Failed to get diff: %v", err)))
-		return m, tea.Batch(cmds...)
-	}
+	// Run the slow work (git diff, Gemini API, git commit) asynchronously
+	// so the event loop can render the input echo before blocking.
+	m.agentBusy = true
+	m.statusText = "Committing..."
+	m.toolName = ""
+	m.toolReason = ""
+	m.textarea.Blur()
 
-	// Extract conversation context for better commit messages
-	conversationContext := m.extractConversationSummary()
-
-	// Generate commit message via one-shot Gemini call
-	commitMsg, err := m.generateCommitMessage(diff, conversationContext)
-	if err != nil {
-		cmds = append(cmds, tea.Println(fmt.Sprintf("Failed to generate commit message: %v", err)))
-		return m, tea.Batch(cmds...)
-	}
-
-	if err := m.manifest.Commit(commitMsg); err != nil {
-		cmds = append(cmds, tea.Println(fmt.Sprintf("Commit failed: %v", err)))
-		return m, tea.Batch(cmds...)
-	}
-
-	// Show subject line prominently, full message below
-	subject := commitMsg
-	if idx := strings.Index(commitMsg, "\n"); idx >= 0 {
-		subject = commitMsg[:idx]
-	}
-	cmds = append(cmds, tea.Println(fmt.Sprintf("Committed: %s", subject)))
-	if m.manifest.HasRemote() {
-		cmds = append(cmds, tea.Println("Push with /push when ready."))
-	}
+	cmds = append(cmds, m.commitAsync(), m.spinner.Tick)
 	return m, tea.Batch(cmds...)
+}
+
+// commitAsync returns a Cmd that performs the commit in a goroutine.
+func (m *model) commitAsync() tea.Cmd {
+	return func() tea.Msg {
+		diff, err := m.manifest.StagedDiff()
+		if err != nil {
+			return cmdResultMsg{lines: []string{fmt.Sprintf("Failed to get diff: %v", err)}}
+		}
+
+		conversationContext := m.extractConversationSummary()
+
+		commitMsg, err := m.generateCommitMessage(diff, conversationContext)
+		if err != nil {
+			return cmdResultMsg{lines: []string{fmt.Sprintf("Failed to generate commit message: %v", err)}}
+		}
+
+		if err := m.manifest.Commit(commitMsg); err != nil {
+			return cmdResultMsg{lines: []string{fmt.Sprintf("Commit failed: %v", err)}}
+		}
+
+		subject := commitMsg
+		if idx := strings.Index(commitMsg, "\n"); idx >= 0 {
+			subject = commitMsg[:idx]
+		}
+		lines := []string{fmt.Sprintf("Committed: %s", subject)}
+		if m.manifest.HasRemote() {
+			lines = append(lines, "Push with /push when ready.")
+		}
+		return cmdResultMsg{lines: lines}
+	}
 }
 
 // handlePush implements the /push command.
@@ -646,12 +670,19 @@ func (m model) handlePush(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	}
 
-	if err := m.manifest.Push(); err != nil {
-		cmds = append(cmds, tea.Println(fmt.Sprintf("Push failed: %v", err)))
-		return m, tea.Batch(cmds...)
-	}
+	m.agentBusy = true
+	m.statusText = "Pushing..."
+	m.toolName = ""
+	m.toolReason = ""
+	m.textarea.Blur()
 
-	cmds = append(cmds, tea.Println("Pushed to remote."))
+	mfst := m.manifest
+	cmds = append(cmds, func() tea.Msg {
+		if err := mfst.Push(); err != nil {
+			return cmdResultMsg{lines: []string{fmt.Sprintf("Push failed: %v", err)}}
+		}
+		return cmdResultMsg{lines: []string{"Pushed to remote."}}
+	}, m.spinner.Tick)
 	return m, tea.Batch(cmds...)
 }
 
@@ -662,17 +693,23 @@ func (m model) handleStatus(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	}
 
-	status, err := m.manifest.GetStatus()
-	if err != nil {
-		cmds = append(cmds, tea.Println(fmt.Sprintf("Failed to get status: %v", err)))
-		return m, tea.Batch(cmds...)
-	}
+	m.agentBusy = true
+	m.statusText = "Checking status..."
+	m.toolName = ""
+	m.toolReason = ""
+	m.textarea.Blur()
 
-	if strings.TrimSpace(status) == "" {
-		cmds = append(cmds, tea.Println("No changes."))
-	} else {
-		cmds = append(cmds, tea.Println(status))
-	}
+	mfst := m.manifest
+	cmds = append(cmds, func() tea.Msg {
+		status, err := mfst.GetStatus()
+		if err != nil {
+			return cmdResultMsg{lines: []string{fmt.Sprintf("Failed to get status: %v", err)}}
+		}
+		if strings.TrimSpace(status) == "" {
+			return cmdResultMsg{lines: []string{"No changes."}}
+		}
+		return cmdResultMsg{lines: []string{status}}
+	}, m.spinner.Tick)
 	return m, tea.Batch(cmds...)
 }
 
