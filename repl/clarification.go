@@ -3,8 +3,6 @@ package repl
 import (
 	"fmt"
 	"strings"
-
-	"github.com/charmbracelet/glamour"
 )
 
 // RenderClarification renders a clarification to a string using glamour markdown rendering.
@@ -14,21 +12,7 @@ func RenderClarification(c *Clarification) string {
 		return ""
 	}
 
-	md := buildClarificationMarkdown(c)
-
-	renderer, err := glamour.NewTermRenderer(
-		glamour.WithStandardStyle("dark"),
-		glamour.WithWordWrap(80),
-	)
-	if err != nil {
-		return md
-	}
-
-	out, err := renderer.Render(md)
-	if err != nil {
-		return md
-	}
-	return out
+	return renderMarkdownSimple(buildClarificationMarkdown(c))
 }
 
 // DisplayClarification formats and prints clarification questions for the user.

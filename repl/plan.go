@@ -3,8 +3,6 @@ package repl
 import (
 	"fmt"
 	"strings"
-
-	"github.com/charmbracelet/glamour"
 )
 
 // RenderPlan renders a plan to a string using glamour markdown rendering.
@@ -14,21 +12,7 @@ func RenderPlan(plan *Plan) string {
 		return "No plan to display.\n"
 	}
 
-	md := buildPlanMarkdown(plan)
-
-	renderer, err := glamour.NewTermRenderer(
-		glamour.WithStandardStyle("dark"),
-		glamour.WithWordWrap(80),
-	)
-	if err != nil {
-		return md
-	}
-
-	out, err := renderer.Render(md)
-	if err != nil {
-		return md
-	}
-	return out
+	return renderMarkdownSimple(buildPlanMarkdown(plan))
 }
 
 // DisplayPlan formats and prints a proposed plan for user review.

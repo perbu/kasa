@@ -193,6 +193,23 @@ func setupMarkdownRenderer() (*glamour.TermRenderer, error) {
 	)
 }
 
+// renderMarkdownSimple renders markdown with glamour using a dark style and 80-char wrap.
+// Falls back to the raw markdown if rendering fails.
+func renderMarkdownSimple(md string) string {
+	renderer, err := glamour.NewTermRenderer(
+		glamour.WithStandardStyle("dark"),
+		glamour.WithWordWrap(80),
+	)
+	if err != nil {
+		return md
+	}
+	out, err := renderer.Render(md)
+	if err != nil {
+		return md
+	}
+	return out
+}
+
 // drainStdin discards any bytes sitting in the terminal input buffer.
 // This prevents stale escape sequence responses (from terminal color/capability
 // queries) from being interpreted as user input by bubbletea.
