@@ -299,7 +299,7 @@ func TestAskClarificationTool(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if result["error"] != "question missing text" {
+		if result["error"] != "question missing text at index 0" {
 			t.Errorf("unexpected error: %v", result["error"])
 		}
 	})
@@ -332,7 +332,7 @@ func TestAskClarificationTool(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if result["error"] != "invalid question format" {
+		if result["error"] != "invalid question format at index 0" {
 			t.Errorf("unexpected error: %v", result["error"])
 		}
 	})
@@ -465,8 +465,8 @@ func TestSleepTool(t *testing.T) {
 
 	t.Run("invalid args type", func(t *testing.T) {
 		result, _ := tool.Run(nil, "bad")
-		if result["error"] != "invalid arguments" {
-			t.Errorf("expected 'invalid arguments', got: %v", result["error"])
+		if result["error"] != "invalid arguments format" {
+			t.Errorf("expected 'invalid arguments format', got: %v", result["error"])
 		}
 	})
 }

@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -91,30 +90,24 @@ func (t *ImportResourceTool) Declaration() *genai.FunctionDeclaration {
 // Run executes the tool.
 func (t *ImportResourceTool) Run(ctx tool.Context, args any) (map[string]any, error) {
 	// Parse arguments
-	argsMap, ok := args.(map[string]any)
-	if !ok {
-		if argsStr, ok := args.(string); ok {
-			if err := json.Unmarshal([]byte(argsStr), &argsMap); err != nil {
-				return map[string]any{"error": "invalid arguments format"}, nil
-			}
-		} else {
-			return map[string]any{"error": "invalid arguments type"}, nil
-		}
+	argsMap, err := parseToolArgs(args)
+	if err != nil {
+		return errorResult(err.Error())
 	}
 
 	namespace, ok := argsMap["namespace"].(string)
 	if !ok || namespace == "" {
-		return map[string]any{"error": "namespace is required"}, nil
+		return errorResult("namespace is required")
 	}
 
 	name, ok := argsMap["name"].(string)
 	if !ok || name == "" {
-		return map[string]any{"error": "name is required"}, nil
+		return errorResult("name is required")
 	}
 
 	kind, ok := argsMap["kind"].(string)
 	if !ok || kind == "" {
-		return map[string]any{"error": "kind is required"}, nil
+		return errorResult("kind is required")
 	}
 
 	apiVersion := ""
@@ -130,9 +123,7 @@ func (t *ImportResourceTool) Run(ctx tool.Context, args any) (map[string]any, er
 	// Normalize kind and validate
 	resourceType := NormalizeKindName(kind)
 	if _, found := LookupGVR(resourceType); !found && apiVersion == "" {
-		return map[string]any{
-			"error": fmt.Sprintf("unsupported resource kind: %s. Provide api_version for custom resources.", kind),
-		}, nil
+		return errorResult(fmt.Sprintf("unsupported resource kind: %s. Provide api_version for custom resources.", kind))
 	}
 
 	// Check if manifest already exists
@@ -150,9 +141,7 @@ func (t *ImportResourceTool) Run(ctx tool.Context, args any) (map[string]any, er
 
 	gvr, found := BuildGVRFromKindAndAPIVersion(resourceType, apiVersion)
 	if !found && apiVersion == "" {
-		return map[string]any{
-			"error": fmt.Sprintf("unknown resource kind '%s'. Provide api_version for custom resources", kind),
-		}, nil
+		return errorResult(fmt.Sprintf("unknown resource kind '%s'. Provide api_version for custom resources", kind))
 	}
 
 	namespaced := IsNamespaced(resourceType)
@@ -163,9 +152,9 @@ func (t *ImportResourceTool) Run(ctx tool.Context, args any) (map[string]any, er
 		resourceClient = t.dynamicClient.Resource(gvr)
 	}
 
-	obj, err := resourceClient.Get(timeoutCtx, name, metav1.GetOptions{})
-	if err != nil {
-		return map[string]any{"error": fmt.Sprintf("failed to fetch %s/%s: %v", resourceType, name, err)}, nil
+	obj, getErr := resourceClient.Get(timeoutCtx, name, metav1.GetOptions{})
+	if getErr != nil {
+		return errorResult(fmt.Sprintf("failed to fetch %s/%s: %v", resourceType, name, getErr))
 	}
 
 	resourceMap := obj.Object
@@ -174,15 +163,15 @@ func (t *ImportResourceTool) Run(ctx tool.Context, args any) (map[string]any, er
 	cleanForImport(resourceMap)
 
 	// Marshal to YAML
-	yamlBytes, err := yaml.Marshal(resourceMap)
-	if err != nil {
-		return map[string]any{"error": fmt.Sprintf("failed to marshal resource: %v", err)}, nil
+	yamlBytes, marshalErr := yaml.Marshal(resourceMap)
+	if marshalErr != nil {
+		return errorResult(fmt.Sprintf("failed to marshal resource: %v", marshalErr))
 	}
 
 	// Save manifest
-	manifestPath, err := t.manifest.SaveManifest(namespace, name, resourceType, yamlBytes)
-	if err != nil {
-		return map[string]any{"error": fmt.Sprintf("failed to save manifest: %v", err)}, nil
+	manifestPath, saveErr := t.manifest.SaveManifest(namespace, name, resourceType, yamlBytes)
+	if saveErr != nil {
+		return errorResult(fmt.Sprintf("failed to save manifest: %v", saveErr))
 	}
 
 	result := map[string]any{

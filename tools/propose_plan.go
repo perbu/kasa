@@ -1,8 +1,6 @@
 package tools
 
 import (
-	"encoding/json"
-
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/tool"
 	"google.golang.org/genai"
@@ -84,32 +82,26 @@ func (t *ProposePlanTool) Declaration() *genai.FunctionDeclaration {
 // Run executes the tool. This tool does NOT execute any actions - it only
 // captures the plan for display and returns a status indicating approval is needed.
 func (t *ProposePlanTool) Run(ctx tool.Context, args any) (map[string]any, error) {
-	argsMap, ok := args.(map[string]any)
-	if !ok {
-		if argsStr, ok := args.(string); ok {
-			if err := json.Unmarshal([]byte(argsStr), &argsMap); err != nil {
-				return map[string]any{"error": "invalid arguments format"}, nil
-			}
-		} else {
-			return map[string]any{"error": "invalid arguments type"}, nil
-		}
+	argsMap, err := parseToolArgs(args)
+	if err != nil {
+		return errorResult(err.Error())
 	}
 
 	description, _ := argsMap["description"].(string)
 	if description == "" {
-		return map[string]any{"error": "description is required"}, nil
+		return errorResult("description is required")
 	}
 
 	actions, ok := argsMap["actions"].([]any)
 	if !ok || len(actions) == 0 {
-		return map[string]any{"error": "at least one action is required"}, nil
+		return errorResult("at least one action is required")
 	}
 
 	// Validate actions have required fields
 	for i, action := range actions {
 		actionMap, ok := action.(map[string]any)
 		if !ok {
-			return map[string]any{"error": "invalid action format"}, nil
+			return errorResult("invalid action format")
 		}
 		if _, ok := actionMap["tool"].(string); !ok {
 			return map[string]any{"error": "action missing tool name", "index": i}, nil

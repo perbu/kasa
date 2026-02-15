@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"time"
 
@@ -87,25 +86,19 @@ func (t *GetLogsTool) Declaration() *genai.FunctionDeclaration {
 // Run executes the tool.
 func (t *GetLogsTool) Run(ctx tool.Context, args any) (map[string]any, error) {
 	// Parse arguments
-	argsMap, ok := args.(map[string]any)
-	if !ok {
-		if argsStr, ok := args.(string); ok {
-			if err := json.Unmarshal([]byte(argsStr), &argsMap); err != nil {
-				return map[string]any{"error": "invalid arguments format"}, nil
-			}
-		} else {
-			return map[string]any{"error": "invalid arguments type"}, nil
-		}
+	argsMap, err := parseToolArgs(args)
+	if err != nil {
+		return errorResult(err.Error())
 	}
 
 	namespace, ok := argsMap["namespace"].(string)
 	if !ok || namespace == "" {
-		return map[string]any{"error": "namespace is required"}, nil
+		return errorResult("namespace is required")
 	}
 
 	pod, ok := argsMap["pod"].(string)
 	if !ok || pod == "" {
-		return map[string]any{"error": "pod is required"}, nil
+		return errorResult("pod is required")
 	}
 
 	container := ""
@@ -149,9 +142,7 @@ func (t *GetLogsTool) Run(ctx tool.Context, args any) (map[string]any, error) {
 
 	logs, err := io.ReadAll(stream)
 	if err != nil {
-		return map[string]any{
-			"error": "failed to read logs: " + err.Error(),
-		}, nil
+		return errorResultf("failed to read logs: %s", err.Error())
 	}
 
 	return map[string]any{

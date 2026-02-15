@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -51,15 +50,9 @@ func (t *ListHelmReleasesTool) Declaration() *genai.FunctionDeclaration {
 }
 
 func (t *ListHelmReleasesTool) Run(ctx tool.Context, args any) (map[string]any, error) {
-	argsMap, ok := args.(map[string]any)
-	if !ok {
-		if argsStr, ok := args.(string); ok {
-			if err := json.Unmarshal([]byte(argsStr), &argsMap); err != nil {
-				return map[string]any{"error": "invalid arguments format"}, nil
-			}
-		} else {
-			argsMap = map[string]any{}
-		}
+	argsMap, _ := parseToolArgs(args)
+	if argsMap == nil {
+		argsMap = map[string]any{}
 	}
 
 	namespace := ""
@@ -74,7 +67,7 @@ func (t *ListHelmReleasesTool) Run(ctx tool.Context, args any) (map[string]any, 
 		LabelSelector: "owner=helm,status=deployed",
 	})
 	if err != nil {
-		return map[string]any{"error": fmt.Sprintf("failed to list Helm secrets: %v", err)}, nil
+		return errorResult(fmt.Sprintf("failed to list Helm secrets: %v", err))
 	}
 
 	releases := make([]map[string]any, 0, len(secrets.Items))

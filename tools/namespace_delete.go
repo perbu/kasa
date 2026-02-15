@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -83,21 +82,15 @@ func (t *DeleteNamespaceTool) Declaration() *genai.FunctionDeclaration {
 // Run executes the tool.
 func (t *DeleteNamespaceTool) Run(ctx tool.Context, args any) (map[string]any, error) {
 	// Parse arguments
-	argsMap, ok := args.(map[string]any)
-	if !ok {
-		if argsStr, ok := args.(string); ok {
-			if err := json.Unmarshal([]byte(argsStr), &argsMap); err != nil {
-				return map[string]any{"error": "invalid arguments format"}, nil
-			}
-		} else {
-			return map[string]any{"error": "invalid arguments type"}, nil
-		}
+	argsMap, err := parseToolArgs(args)
+	if err != nil {
+		return errorResult(err.Error())
 	}
 
 	// Extract required parameters
 	name, ok := argsMap["name"].(string)
 	if !ok || name == "" {
-		return map[string]any{"error": "name is required"}, nil
+		return errorResult("name is required")
 	}
 
 	// Protect system namespaces
@@ -148,7 +141,7 @@ func (t *DeleteNamespaceTool) Run(ctx tool.Context, args any) (map[string]any, e
 				"error":   fmt.Sprintf("Namespace %s not found", name),
 			}, nil
 		}
-		return map[string]any{"error": fmt.Sprintf("failed to get namespace: %v", err)}, nil
+		return errorResultf("failed to get namespace: %v", err)
 	}
 
 	// Check if namespace is empty (unless force is set)
@@ -188,7 +181,7 @@ func (t *DeleteNamespaceTool) Run(ctx tool.Context, args any) (map[string]any, e
 		PropagationPolicy: &deletePolicy,
 	})
 	if err != nil {
-		return map[string]any{"error": fmt.Sprintf("failed to delete namespace: %v", err)}, nil
+		return errorResultf("failed to delete namespace: %v", err)
 	}
 
 	result := map[string]any{

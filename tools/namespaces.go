@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 
 	"google.golang.org/adk/model"
@@ -71,16 +70,8 @@ func (t *ListNamespacesTool) Declaration() *genai.FunctionDeclaration {
 
 // Run executes the tool.
 func (t *ListNamespacesTool) Run(ctx tool.Context, args any) (map[string]any, error) {
-	// Parse arguments (none required for this tool)
-	if args != nil {
-		if _, ok := args.(map[string]any); !ok {
-			if argsStr, ok := args.(string); ok {
-				var argsMap map[string]any
-				if err := json.Unmarshal([]byte(argsStr), &argsMap); err != nil {
-					return map[string]any{"error": "invalid arguments format"}, nil
-				}
-			}
-		}
+	if _, err := parseToolArgs(args); err != nil {
+		return errorResult(err.Error())
 	}
 
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -88,7 +79,7 @@ func (t *ListNamespacesTool) Run(ctx tool.Context, args any) (map[string]any, er
 
 	namespaces, err := t.clientset.CoreV1().Namespaces().List(timeoutCtx, metav1.ListOptions{})
 	if err != nil {
-		return map[string]any{"error": err.Error()}, nil
+		return errorResult(err.Error())
 	}
 
 	result := make([]NamespaceInfo, 0, len(namespaces.Items))

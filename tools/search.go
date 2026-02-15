@@ -90,19 +90,19 @@ type jinaSearchResult struct {
 
 // Run executes the tool.
 func (t *SearchWebTool) Run(ctx tool.Context, args any) (map[string]any, error) {
-	argsMap, ok := args.(map[string]any)
-	if !ok {
-		return map[string]any{"error": "invalid arguments"}, nil
+	argsMap, err := parseToolArgs(args)
+	if err != nil {
+		return errorResult(err.Error())
 	}
 
 	query, ok := argsMap["query"].(string)
 	if !ok || query == "" {
-		return map[string]any{"error": "query parameter is required"}, nil
+		return errorResult("query parameter is required")
 	}
 
 	// Check if API key is configured
 	if t.apiKey == "" {
-		return map[string]any{"error": "JINA_API_KEY not configured"}, nil
+		return errorResult("JINA_API_KEY not configured")
 	}
 
 	// Create request body
@@ -112,13 +112,13 @@ func (t *SearchWebTool) Run(ctx tool.Context, args any) (map[string]any, error) 
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
-		return map[string]any{"error": fmt.Sprintf("failed to marshal request: %v", err)}, nil
+		return errorResult(fmt.Sprintf("failed to marshal request: %v", err))
 	}
 
 	// Create HTTP request
 	req, err := http.NewRequest("POST", "https://s.jina.ai/", bytes.NewBuffer(jsonBody))
 	if err != nil {
-		return map[string]any{"error": fmt.Sprintf("failed to create request: %v", err)}, nil
+		return errorResult(fmt.Sprintf("failed to create request: %v", err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -128,25 +128,25 @@ func (t *SearchWebTool) Run(ctx tool.Context, args any) (map[string]any, error) 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return map[string]any{"error": fmt.Sprintf("failed to execute search: %v", err)}, nil
+		return errorResult(fmt.Sprintf("failed to execute search: %v", err))
 	}
 	defer resp.Body.Close()
 
 	// Read response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return map[string]any{"error": fmt.Sprintf("failed to read response: %v", err)}, nil
+		return errorResult(fmt.Sprintf("failed to read response: %v", err))
 	}
 
 	// Check for non-200 status
 	if resp.StatusCode != http.StatusOK {
-		return map[string]any{"error": fmt.Sprintf("search API returned status %d: %s", resp.StatusCode, string(body))}, nil
+		return errorResult(fmt.Sprintf("search API returned status %d: %s", resp.StatusCode, string(body)))
 	}
 
 	// Parse response
 	var jinaResp jinaSearchResponse
 	if err := json.Unmarshal(body, &jinaResp); err != nil {
-		return map[string]any{"error": fmt.Sprintf("failed to parse response: %v", err)}, nil
+		return errorResult(fmt.Sprintf("failed to parse response: %v", err))
 	}
 
 	// Convert results to generic format

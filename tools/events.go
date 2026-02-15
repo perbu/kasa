@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"sort"
 	"time"
 
@@ -95,15 +94,9 @@ func (t *GetEventsTool) Declaration() *genai.FunctionDeclaration {
 // Run executes the tool.
 func (t *GetEventsTool) Run(ctx tool.Context, args any) (map[string]any, error) {
 	// Parse arguments
-	argsMap, ok := args.(map[string]any)
-	if !ok {
-		if argsStr, ok := args.(string); ok {
-			if err := json.Unmarshal([]byte(argsStr), &argsMap); err != nil {
-				return map[string]any{"error": "invalid arguments format"}, nil
-			}
-		} else {
-			return map[string]any{"error": "invalid arguments type"}, nil
-		}
+	argsMap, err := parseToolArgs(args)
+	if err != nil {
+		return errorResult(err.Error())
 	}
 
 	namespace := ""
@@ -111,7 +104,7 @@ func (t *GetEventsTool) Run(ctx tool.Context, args any) (map[string]any, error) 
 		namespace = ns
 	}
 	if namespace == "" {
-		return map[string]any{"error": "namespace is required"}, nil
+		return errorResult("namespace is required")
 	}
 
 	resourceName := ""
@@ -143,7 +136,7 @@ func (t *GetEventsTool) Run(ctx tool.Context, args any) (map[string]any, error) 
 		FieldSelector: fieldSelector,
 	})
 	if err != nil {
-		return map[string]any{"error": err.Error()}, nil
+		return errorResult(err.Error())
 	}
 
 	// Sort by LastTimestamp descending (most recent first)

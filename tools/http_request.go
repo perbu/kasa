@@ -79,24 +79,24 @@ func (t *HTTPRequestTool) Declaration() *genai.FunctionDeclaration {
 
 // Run executes the tool.
 func (t *HTTPRequestTool) Run(ctx tool.Context, args any) (map[string]any, error) {
-	argsMap, ok := args.(map[string]any)
-	if !ok {
-		return map[string]any{"error": "invalid arguments"}, nil
+	argsMap, err := parseToolArgs(args)
+	if err != nil {
+		return errorResult(err.Error())
 	}
 
 	// Parse URL
 	urlRaw, ok := argsMap["url"]
 	if !ok {
-		return map[string]any{"error": "url parameter is required"}, nil
+		return errorResult("url parameter is required")
 	}
 	url, ok := urlRaw.(string)
 	if !ok {
-		return map[string]any{"error": "url must be a string"}, nil
+		return errorResult("url must be a string")
 	}
 
 	// Validate URL scheme
 	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
-		return map[string]any{"error": "url must start with http:// or https://"}, nil
+		return errorResult("url must start with http:// or https://")
 	}
 
 	// Parse method (default GET)
@@ -109,7 +109,7 @@ func (t *HTTPRequestTool) Run(ctx tool.Context, args any) (map[string]any, error
 
 	// Validate method
 	if method != "GET" && method != "HEAD" {
-		return map[string]any{"error": "method must be GET or HEAD"}, nil
+		return errorResult("method must be GET or HEAD")
 	}
 
 	// Parse headers
@@ -127,7 +127,7 @@ func (t *HTTPRequestTool) Run(ctx tool.Context, args any) (map[string]any, error
 	// Create request
 	req, err := http.NewRequest(method, url, nil)
 	if err != nil {
-		return map[string]any{"error": fmt.Sprintf("failed to create request: %v", err)}, nil
+		return errorResult(fmt.Sprintf("failed to create request: %v", err))
 	}
 
 	// Set headers (Host must be set on req.Host, not req.Header)

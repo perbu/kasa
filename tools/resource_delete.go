@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -90,31 +89,25 @@ func (t *DeleteResourceTool) Declaration() *genai.FunctionDeclaration {
 // Run executes the tool.
 func (t *DeleteResourceTool) Run(ctx tool.Context, args any) (map[string]any, error) {
 	// Parse arguments
-	argsMap, ok := args.(map[string]any)
-	if !ok {
-		if argsStr, ok := args.(string); ok {
-			if err := json.Unmarshal([]byte(argsStr), &argsMap); err != nil {
-				return map[string]any{"error": "invalid arguments format"}, nil
-			}
-		} else {
-			return map[string]any{"error": "invalid arguments type"}, nil
-		}
+	argsMap, err := parseToolArgs(args)
+	if err != nil {
+		return errorResult(err.Error())
 	}
 
 	// Extract required parameters
 	resourceType, ok := argsMap["type"].(string)
 	if !ok || resourceType == "" {
-		return map[string]any{"error": "type is required"}, nil
+		return errorResult("type is required")
 	}
 
 	name, ok := argsMap["name"].(string)
 	if !ok || name == "" {
-		return map[string]any{"error": "name is required"}, nil
+		return errorResult("name is required")
 	}
 
 	namespace, ok := argsMap["namespace"].(string)
 	if !ok || namespace == "" {
-		return map[string]any{"error": "namespace is required"}, nil
+		return errorResult("namespace is required")
 	}
 
 	apiVersion := ""
@@ -130,9 +123,7 @@ func (t *DeleteResourceTool) Run(ctx tool.Context, args any) (map[string]any, er
 	// Normalize resource type and validate
 	normalizedType := NormalizeKindName(resourceType)
 	if _, found := LookupGVR(normalizedType); !found && apiVersion == "" {
-		return map[string]any{
-			"error": fmt.Sprintf("unsupported resource type: %s. Provide api_version for custom resources.", resourceType),
-		}, nil
+		return errorResult(fmt.Sprintf("unsupported resource type: %s. Provide api_version for custom resources.", resourceType))
 	}
 
 	// Delete from cluster using dynamic client
@@ -141,9 +132,7 @@ func (t *DeleteResourceTool) Run(ctx tool.Context, args any) (map[string]any, er
 
 	gvr, found := BuildGVRFromKindAndAPIVersion(normalizedType, apiVersion)
 	if !found && apiVersion == "" {
-		return map[string]any{
-			"error": fmt.Sprintf("unknown resource kind '%s'. Provide api_version for custom resources", resourceType),
-		}, nil
+		return errorResult(fmt.Sprintf("unknown resource kind '%s'. Provide api_version for custom resources", resourceType))
 	}
 
 	namespaced := IsNamespaced(normalizedType)
@@ -152,16 +141,16 @@ func (t *DeleteResourceTool) Run(ctx tool.Context, args any) (map[string]any, er
 		PropagationPolicy: &deletePolicy,
 	}
 
-	var err error
+	var deleteErr error
 	if namespaced {
-		err = t.dynamicClient.Resource(gvr).Namespace(namespace).Delete(timeoutCtx, name, deleteOptions)
+		deleteErr = t.dynamicClient.Resource(gvr).Namespace(namespace).Delete(timeoutCtx, name, deleteOptions)
 	} else {
-		err = t.dynamicClient.Resource(gvr).Delete(timeoutCtx, name, deleteOptions)
+		deleteErr = t.dynamicClient.Resource(gvr).Delete(timeoutCtx, name, deleteOptions)
 	}
-	if err != nil {
+	if deleteErr != nil {
 		return map[string]any{
 			"success": false,
-			"error":   err.Error(),
+			"error":   deleteErr.Error(),
 		}, nil
 	}
 

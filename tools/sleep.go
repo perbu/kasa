@@ -61,14 +61,14 @@ func (t *SleepTool) Declaration() *genai.FunctionDeclaration {
 
 // Run executes the tool.
 func (t *SleepTool) Run(ctx tool.Context, args any) (map[string]any, error) {
-	argsMap, ok := args.(map[string]any)
-	if !ok {
-		return map[string]any{"error": "invalid arguments"}, nil
+	argsMap, err := parseToolArgs(args)
+	if err != nil {
+		return errorResult(err.Error())
 	}
 
 	secondsRaw, ok := argsMap["seconds"]
 	if !ok {
-		return map[string]any{"error": "seconds parameter is required"}, nil
+		return errorResult("seconds parameter is required")
 	}
 
 	var seconds float64
@@ -80,11 +80,11 @@ func (t *SleepTool) Run(ctx tool.Context, args any) (map[string]any, error) {
 	case int64:
 		seconds = float64(v)
 	default:
-		return map[string]any{"error": "seconds must be a number"}, nil
+		return errorResult("seconds must be a number")
 	}
 
 	if seconds < 0 {
-		return map[string]any{"error": "seconds cannot be negative"}, nil
+		return errorResult("seconds cannot be negative")
 	}
 
 	// Cap at 5 minutes to prevent excessively long waits

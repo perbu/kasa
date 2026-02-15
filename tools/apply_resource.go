@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -87,20 +86,14 @@ func (t *ApplyResourceTool) Declaration() *genai.FunctionDeclaration {
 
 // Run executes the tool.
 func (t *ApplyResourceTool) Run(ctx tool.Context, args any) (map[string]any, error) {
-	argsMap, ok := args.(map[string]any)
-	if !ok {
-		if argsStr, ok := args.(string); ok {
-			if err := json.Unmarshal([]byte(argsStr), &argsMap); err != nil {
-				return map[string]any{"error": "invalid arguments format"}, nil
-			}
-		} else {
-			return map[string]any{"error": "invalid arguments type"}, nil
-		}
+	argsMap, err := parseToolArgs(args)
+	if err != nil {
+		return errorResult(err.Error())
 	}
 
 	yamlContent, ok := argsMap["yaml"].(string)
 	if !ok || yamlContent == "" {
-		return map[string]any{"error": "yaml is required"}, nil
+		return errorResult("yaml is required")
 	}
 
 	namespaceOverride := ""
@@ -119,15 +112,15 @@ func (t *ApplyResourceTool) Run(ctx tool.Context, args any) (map[string]any, err
 	}
 
 	// Parse YAML to unstructured
-	obj, err := ParseYAMLToUnstructured([]byte(yamlContent))
-	if err != nil {
-		return map[string]any{"error": fmt.Sprintf("failed to parse YAML: %v", err)}, nil
+	obj, parseErr := ParseYAMLToUnstructured([]byte(yamlContent))
+	if parseErr != nil {
+		return errorResult(fmt.Sprintf("failed to parse YAML: %v", parseErr))
 	}
 
 	// Extract GVK
 	gvk := obj.GroupVersionKind()
 	if gvk.Kind == "" {
-		return map[string]any{"error": "YAML must contain a 'kind' field"}, nil
+		return errorResult("YAML must contain a 'kind' field")
 	}
 
 	// Convert GVK to GVR
@@ -149,7 +142,7 @@ func (t *ApplyResourceTool) Run(ctx tool.Context, args any) (map[string]any, err
 
 	name := obj.GetName()
 	if name == "" {
-		return map[string]any{"error": "YAML must contain metadata.name"}, nil
+		return errorResult("YAML must contain metadata.name")
 	}
 
 	// Use resource name as app name if not provided
@@ -180,15 +173,16 @@ func (t *ApplyResourceTool) Run(ctx tool.Context, args any) (map[string]any, err
 	}
 
 	// Try to get existing resource to determine create vs update
-	existing, err := resourceClient.Get(timeoutCtx, name, metav1.GetOptions{})
+	existing, getErr := resourceClient.Get(timeoutCtx, name, metav1.GetOptions{})
 	var resultObj *unstructured.Unstructured
 	var action string
+	var opErr error
 
-	if err != nil {
+	if getErr != nil {
 		// Resource doesn't exist, create it
-		resultObj, err = resourceClient.Create(timeoutCtx, obj, createOptions)
-		if err != nil {
-			return map[string]any{"error": fmt.Sprintf("failed to create %s: %v", gvk.Kind, err)}, nil
+		resultObj, opErr = resourceClient.Create(timeoutCtx, obj, createOptions)
+		if opErr != nil {
+			return errorResult(fmt.Sprintf("failed to create %s: %v", gvk.Kind, opErr))
 		}
 		action = "created"
 	} else {
@@ -198,9 +192,9 @@ func (t *ApplyResourceTool) Run(ctx tool.Context, args any) (map[string]any, err
 		if strings.EqualFold(gvk.Kind, "Service") {
 			preserveServiceFields(existing, obj)
 		}
-		resultObj, err = resourceClient.Update(timeoutCtx, obj, updateOptions)
-		if err != nil {
-			return map[string]any{"error": fmt.Sprintf("failed to update %s: %v", gvk.Kind, err)}, nil
+		resultObj, opErr = resourceClient.Update(timeoutCtx, obj, updateOptions)
+		if opErr != nil {
+			return errorResult(fmt.Sprintf("failed to update %s: %v", gvk.Kind, opErr))
 		}
 		action = "updated"
 	}
@@ -230,9 +224,9 @@ func (t *ApplyResourceTool) Run(ctx tool.Context, args any) (map[string]any, err
 
 		// Save manifest to git storage (only on actual apply, not dry run)
 		if t.manifest != nil && namespaced {
-			manifestPath, err := t.manifest.SaveManifest(namespace, appName, resourceType, []byte(yamlContent))
-			if err != nil {
-				result["manifest_warning"] = fmt.Sprintf("Applied to cluster but failed to save manifest: %v", err)
+			manifestPath, saveErr := t.manifest.SaveManifest(namespace, appName, resourceType, []byte(yamlContent))
+			if saveErr != nil {
+				result["manifest_warning"] = fmt.Sprintf("Applied to cluster but failed to save manifest: %v", saveErr)
 			} else {
 				result["manifest_path"] = manifestPath
 			}

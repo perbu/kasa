@@ -1,7 +1,7 @@
 package tools
 
 import (
-	"encoding/json"
+	"fmt"
 
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/tool"
@@ -83,35 +83,29 @@ func (t *AskClarificationTool) Declaration() *genai.FunctionDeclaration {
 // Run executes the tool. This tool does NOT block - it captures the questions
 // for display and returns a status indicating answers are needed.
 func (t *AskClarificationTool) Run(ctx tool.Context, args any) (map[string]any, error) {
-	argsMap, ok := args.(map[string]any)
-	if !ok {
-		if argsStr, ok := args.(string); ok {
-			if err := json.Unmarshal([]byte(argsStr), &argsMap); err != nil {
-				return map[string]any{"error": "invalid arguments format"}, nil
-			}
-		} else {
-			return map[string]any{"error": "invalid arguments type"}, nil
-		}
+	argsMap, err := parseToolArgs(args)
+	if err != nil {
+		return errorResult(err.Error())
 	}
 
 	contextStr, _ := argsMap["context"].(string)
 	if contextStr == "" {
-		return map[string]any{"error": "context is required"}, nil
+		return errorResult("context is required")
 	}
 
 	questions, ok := argsMap["questions"].([]any)
 	if !ok || len(questions) == 0 {
-		return map[string]any{"error": "at least one question is required"}, nil
+		return errorResult("at least one question is required")
 	}
 
 	// Validate questions have required fields
 	for i, q := range questions {
 		qMap, ok := q.(map[string]any)
 		if !ok {
-			return map[string]any{"error": "invalid question format", "index": i}, nil
+			return errorResult(fmt.Sprintf("invalid question format at index %d", i))
 		}
 		if _, ok := qMap["question"].(string); !ok {
-			return map[string]any{"error": "question missing text", "index": i}, nil
+			return errorResult(fmt.Sprintf("question missing text at index %d", i))
 		}
 	}
 

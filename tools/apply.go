@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -87,30 +86,24 @@ func (t *ApplyManifestTool) Declaration() *genai.FunctionDeclaration {
 // Run executes the tool.
 func (t *ApplyManifestTool) Run(ctx tool.Context, args any) (map[string]any, error) {
 	// Parse arguments
-	argsMap, ok := args.(map[string]any)
-	if !ok {
-		if argsStr, ok := args.(string); ok {
-			if err := json.Unmarshal([]byte(argsStr), &argsMap); err != nil {
-				return map[string]any{"error": "invalid arguments format"}, nil
-			}
-		} else {
-			return map[string]any{"error": "invalid arguments type"}, nil
-		}
+	argsMap, err := parseToolArgs(args)
+	if err != nil {
+		return errorResult(err.Error())
 	}
 
 	namespace, ok := argsMap["namespace"].(string)
 	if !ok || namespace == "" {
-		return map[string]any{"error": "namespace is required"}, nil
+		return errorResult("namespace is required")
 	}
 
 	app, ok := argsMap["app"].(string)
 	if !ok || app == "" {
-		return map[string]any{"error": "app is required"}, nil
+		return errorResult("app is required")
 	}
 
 	resourceType, ok := argsMap["type"].(string)
 	if !ok || resourceType == "" {
-		return map[string]any{"error": "type is required"}, nil
+		return errorResult("type is required")
 	}
 
 	dryRun := false
@@ -122,15 +115,15 @@ func (t *ApplyManifestTool) Run(ctx tool.Context, args any) (map[string]any, err
 	resourceType = NormalizeKindName(resourceType)
 
 	// Read manifest from storage
-	content, err := t.manifest.ReadManifest(namespace, app, resourceType)
-	if err != nil {
-		return map[string]any{"error": err.Error()}, nil
+	content, readErr := t.manifest.ReadManifest(namespace, app, resourceType)
+	if readErr != nil {
+		return errorResult(readErr.Error())
 	}
 
 	// Parse YAML to unstructured
-	obj, err := ParseYAMLToUnstructured(content)
-	if err != nil {
-		return map[string]any{"error": fmt.Sprintf("invalid YAML: %v", err)}, nil
+	obj, parseErr := ParseYAMLToUnstructured(content)
+	if parseErr != nil {
+		return errorResult(fmt.Sprintf("invalid YAML: %v", parseErr))
 	}
 
 	// Set namespace
@@ -139,13 +132,13 @@ func (t *ApplyManifestTool) Run(ctx tool.Context, args any) (map[string]any, err
 	// Determine GVR from the parsed object
 	gvk := obj.GroupVersionKind()
 	if gvk.Kind == "" {
-		return map[string]any{"error": "manifest YAML must contain a 'kind' field"}, nil
+		return errorResult("manifest YAML must contain a 'kind' field")
 	}
 	gvr := GVKToGVR(gvk)
 
 	name := obj.GetName()
 	if name == "" {
-		return map[string]any{"error": "manifest YAML must contain metadata.name"}, nil
+		return errorResult("manifest YAML must contain metadata.name")
 	}
 
 	// Apply to cluster
@@ -168,16 +161,16 @@ func (t *ApplyManifestTool) Run(ctx tool.Context, args any) (map[string]any, err
 	}
 
 	// Try to get existing resource to determine create vs update
-	existing, err := resourceClient.Get(timeoutCtx, name, metav1.GetOptions{})
+	existing, getErr := resourceClient.Get(timeoutCtx, name, metav1.GetOptions{})
 	var action string
 
-	if err != nil {
+	if getErr != nil {
 		// Resource doesn't exist, create it
-		_, err = resourceClient.Create(timeoutCtx, obj, createOptions)
-		if err != nil {
+		_, createErr := resourceClient.Create(timeoutCtx, obj, createOptions)
+		if createErr != nil {
 			return map[string]any{
 				"success": false,
-				"error":   fmt.Sprintf("failed to create %s: %v", gvk.Kind, err),
+				"error":   fmt.Sprintf("failed to create %s: %v", gvk.Kind, createErr),
 			}, nil
 		}
 		action = "created"
@@ -187,11 +180,11 @@ func (t *ApplyManifestTool) Run(ctx tool.Context, args any) (map[string]any, err
 		if strings.EqualFold(gvk.Kind, "Service") {
 			preserveServiceFields(existing, obj)
 		}
-		_, err = resourceClient.Update(timeoutCtx, obj, updateOptions)
-		if err != nil {
+		_, updateErr := resourceClient.Update(timeoutCtx, obj, updateOptions)
+		if updateErr != nil {
 			return map[string]any{
 				"success": false,
-				"error":   fmt.Sprintf("failed to update %s: %v", gvk.Kind, err),
+				"error":   fmt.Sprintf("failed to update %s: %v", gvk.Kind, updateErr),
 			}, nil
 		}
 		action = "updated"

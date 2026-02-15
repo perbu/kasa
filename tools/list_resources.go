@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -82,20 +81,14 @@ func (t *ListResourcesTool) Declaration() *genai.FunctionDeclaration {
 
 // Run executes the tool.
 func (t *ListResourcesTool) Run(ctx tool.Context, args any) (map[string]any, error) {
-	argsMap, ok := args.(map[string]any)
-	if !ok {
-		if argsStr, ok := args.(string); ok {
-			if err := json.Unmarshal([]byte(argsStr), &argsMap); err != nil {
-				return map[string]any{"error": "invalid arguments format"}, nil
-			}
-		} else {
-			return map[string]any{"error": "invalid arguments type"}, nil
-		}
+	argsMap, err := parseToolArgs(args)
+	if err != nil {
+		return errorResult(err.Error())
 	}
 
 	kind, ok := argsMap["kind"].(string)
 	if !ok || kind == "" {
-		return map[string]any{"error": "kind is required"}, nil
+		return errorResult("kind is required")
 	}
 
 	namespace := ""
@@ -116,9 +109,7 @@ func (t *ListResourcesTool) Run(ctx tool.Context, args any) (map[string]any, err
 	// Build GVR from kind and api_version
 	gvr, found := BuildGVRFromKindAndAPIVersion(kind, apiVersion)
 	if !found && apiVersion == "" {
-		return map[string]any{
-			"error": fmt.Sprintf("Unknown resource kind '%s'. Provide api_version for custom resources. Known kinds include: deployment, service, pod, configmap, secret, ingress, httproute, gateway, certificate.", kind),
-		}, nil
+		return errorResultf("Unknown resource kind '%s'. Provide api_version for custom resources. Known kinds include: deployment, service, pod, configmap, secret, ingress, httproute, gateway, certificate.", kind)
 	}
 
 	// Check if resource is namespaced
@@ -146,7 +137,7 @@ func (t *ListResourcesTool) Run(ctx tool.Context, args any) (map[string]any, err
 
 	list, err := resourceClient.List(timeoutCtx, listOptions)
 	if err != nil {
-		return map[string]any{"error": fmt.Sprintf("failed to list %s: %v", kind, err)}, nil
+		return errorResultf("failed to list %s: %v", kind, err)
 	}
 
 	// Build result summary

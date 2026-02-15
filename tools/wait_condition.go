@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -103,31 +102,25 @@ func (t *WaitForConditionTool) Declaration() *genai.FunctionDeclaration {
 // Run executes the tool.
 func (t *WaitForConditionTool) Run(ctx tool.Context, args any) (map[string]any, error) {
 	// Parse arguments
-	argsMap, ok := args.(map[string]any)
-	if !ok {
-		if argsStr, ok := args.(string); ok {
-			if err := json.Unmarshal([]byte(argsStr), &argsMap); err != nil {
-				return map[string]any{"error": "invalid arguments format"}, nil
-			}
-		} else {
-			return map[string]any{"error": "invalid arguments type"}, nil
-		}
+	argsMap, err := parseToolArgs(args)
+	if err != nil {
+		return errorResult(err.Error())
 	}
 
 	// Extract required parameters
 	kind, ok := argsMap["kind"].(string)
 	if !ok || kind == "" {
-		return map[string]any{"error": "kind is required"}, nil
+		return errorResult("kind is required")
 	}
 
 	name, ok := argsMap["name"].(string)
 	if !ok || name == "" {
-		return map[string]any{"error": "name is required"}, nil
+		return errorResult("name is required")
 	}
 
 	condition, ok := argsMap["condition"].(string)
 	if !ok || condition == "" {
-		return map[string]any{"error": "condition is required"}, nil
+		return errorResult("condition is required")
 	}
 
 	// Extract optional parameters

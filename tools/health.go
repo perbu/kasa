@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -91,26 +90,20 @@ func (t *CheckDeploymentHealthTool) Declaration() *genai.FunctionDeclaration {
 // Run executes the tool.
 func (t *CheckDeploymentHealthTool) Run(ctx tool.Context, args any) (map[string]any, error) {
 	// Parse arguments
-	argsMap, ok := args.(map[string]any)
-	if !ok {
-		if argsStr, ok := args.(string); ok {
-			if err := json.Unmarshal([]byte(argsStr), &argsMap); err != nil {
-				return map[string]any{"error": "invalid arguments format"}, nil
-			}
-		} else {
-			return map[string]any{"error": "invalid arguments type"}, nil
-		}
+	argsMap, err := parseToolArgs(args)
+	if err != nil {
+		return errorResult(err.Error())
 	}
 
 	// Extract parameters
 	name, ok := argsMap["name"].(string)
 	if !ok || name == "" {
-		return map[string]any{"error": "name is required"}, nil
+		return errorResult("name is required")
 	}
 
 	namespace, ok := argsMap["namespace"].(string)
 	if !ok || namespace == "" {
-		return map[string]any{"error": "namespace is required"}, nil
+		return errorResult("namespace is required")
 	}
 
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -119,7 +112,7 @@ func (t *CheckDeploymentHealthTool) Run(ctx tool.Context, args any) (map[string]
 	// Get deployment
 	deployment, err := t.clientset.AppsV1().Deployments(namespace).Get(timeoutCtx, name, metav1.GetOptions{})
 	if err != nil {
-		return map[string]any{"error": fmt.Sprintf("failed to get deployment: %v", err)}, nil
+		return errorResultf("failed to get deployment: %v", err)
 	}
 
 	// Get pods for this deployment
@@ -128,7 +121,7 @@ func (t *CheckDeploymentHealthTool) Run(ctx tool.Context, args any) (map[string]
 		LabelSelector: labelSelector,
 	})
 	if err != nil {
-		return map[string]any{"error": fmt.Sprintf("failed to list pods: %v", err)}, nil
+		return errorResultf("failed to list pods: %v", err)
 	}
 
 	// Collect pod info

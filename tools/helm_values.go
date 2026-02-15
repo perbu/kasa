@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"google.golang.org/adk/model"
@@ -54,30 +53,24 @@ func (t *GetHelmValuesTool) Declaration() *genai.FunctionDeclaration {
 }
 
 func (t *GetHelmValuesTool) Run(ctx tool.Context, args any) (map[string]any, error) {
-	argsMap, ok := args.(map[string]any)
-	if !ok {
-		if argsStr, ok := args.(string); ok {
-			if err := json.Unmarshal([]byte(argsStr), &argsMap); err != nil {
-				return map[string]any{"error": "invalid arguments format"}, nil
-			}
-		} else {
-			return map[string]any{"error": "invalid arguments type"}, nil
-		}
+	argsMap, err := parseToolArgs(args)
+	if err != nil {
+		return errorResult(err.Error())
 	}
 
 	name, ok := argsMap["name"].(string)
 	if !ok || name == "" {
-		return map[string]any{"error": "name is required"}, nil
+		return errorResult("name is required")
 	}
 
 	namespace, ok := argsMap["namespace"].(string)
 	if !ok || namespace == "" {
-		return map[string]any{"error": "namespace is required"}, nil
+		return errorResult("namespace is required")
 	}
 
 	rel, err := findHelmReleaseSecret(ctx, t.clientset, name, namespace)
 	if err != nil {
-		return map[string]any{"error": fmt.Sprintf("failed to get Helm release: %v", err)}, nil
+		return errorResult(fmt.Sprintf("failed to get Helm release: %v", err))
 	}
 
 	if len(rel.Config) == 0 {
@@ -90,7 +83,7 @@ func (t *GetHelmValuesTool) Run(ctx tool.Context, args any) (map[string]any, err
 
 	yamlBytes, err := yaml.Marshal(rel.Config)
 	if err != nil {
-		return map[string]any{"error": fmt.Sprintf("failed to marshal values to YAML: %v", err)}, nil
+		return errorResult(fmt.Sprintf("failed to marshal values to YAML: %v", err))
 	}
 
 	return map[string]any{

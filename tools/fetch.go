@@ -68,26 +68,26 @@ func (t *FetchUrlTool) Declaration() *genai.FunctionDeclaration {
 
 // Run executes the tool.
 func (t *FetchUrlTool) Run(ctx tool.Context, args any) (map[string]any, error) {
-	argsMap, ok := args.(map[string]any)
-	if !ok {
-		return map[string]any{"error": "invalid arguments"}, nil
+	argsMap, err := parseToolArgs(args)
+	if err != nil {
+		return errorResult(err.Error())
 	}
 
 	url, ok := argsMap["url"].(string)
 	if !ok || url == "" {
-		return map[string]any{"error": "url parameter is required"}, nil
+		return errorResult("url parameter is required")
 	}
 
 	// Check if API key is configured
 	if t.apiKey == "" {
-		return map[string]any{"error": "JINA_API_KEY not configured"}, nil
+		return errorResult("JINA_API_KEY not configured")
 	}
 
 	// Create request to Jina Reader API
 	jinaURL := "https://r.jina.ai/" + url
 	req, err := http.NewRequest("GET", jinaURL, nil)
 	if err != nil {
-		return map[string]any{"error": fmt.Sprintf("failed to create request: %v", err)}, nil
+		return errorResult(fmt.Sprintf("failed to create request: %v", err))
 	}
 
 	// Add authorization header
@@ -97,14 +97,14 @@ func (t *FetchUrlTool) Run(ctx tool.Context, args any) (map[string]any, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return map[string]any{"error": fmt.Sprintf("failed to fetch URL: %v", err)}, nil
+		return errorResult(fmt.Sprintf("failed to fetch URL: %v", err))
 	}
 	defer resp.Body.Close()
 
 	// Read response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return map[string]any{"error": fmt.Sprintf("failed to read response: %v", err)}, nil
+		return errorResult(fmt.Sprintf("failed to read response: %v", err))
 	}
 
 	// Truncate if too long (Gemini has context limits)

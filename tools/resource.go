@@ -87,15 +87,9 @@ func (t *GetResourceTool) Declaration() *genai.FunctionDeclaration {
 // Run executes the tool.
 func (t *GetResourceTool) Run(ctx tool.Context, args any) (map[string]any, error) {
 	// Parse arguments
-	argsMap, ok := args.(map[string]any)
-	if !ok {
-		if argsStr, ok := args.(string); ok {
-			if err := json.Unmarshal([]byte(argsStr), &argsMap); err != nil {
-				return map[string]any{"error": "invalid arguments format"}, nil
-			}
-		} else {
-			return map[string]any{"error": "invalid arguments type"}, nil
-		}
+	argsMap, err := parseToolArgs(args)
+	if err != nil {
+		return errorResult(err.Error())
 	}
 
 	kind := ""
@@ -103,7 +97,7 @@ func (t *GetResourceTool) Run(ctx tool.Context, args any) (map[string]any, error
 		kind = strings.ToLower(k)
 	}
 	if kind == "" {
-		return map[string]any{"error": "kind is required"}, nil
+		return errorResult("kind is required")
 	}
 
 	name := ""
@@ -111,7 +105,7 @@ func (t *GetResourceTool) Run(ctx tool.Context, args any) (map[string]any, error
 		name = n
 	}
 	if name == "" {
-		return map[string]any{"error": "name is required"}, nil
+		return errorResult("name is required")
 	}
 
 	namespace := "default"
@@ -128,34 +122,32 @@ func (t *GetResourceTool) Run(ctx tool.Context, args any) (map[string]any, error
 	defer cancel()
 
 	var resource any
-	var err error
+	var resourceErr error
 
 	// Try typed clients first for known core resources
 	switch kind {
 	case "deployment", "deployments", "deploy":
-		resource, err = t.getDeployment(timeoutCtx, namespace, name)
+		resource, resourceErr = t.getDeployment(timeoutCtx, namespace, name)
 	case "service", "services", "svc":
-		resource, err = t.getService(timeoutCtx, namespace, name)
+		resource, resourceErr = t.getService(timeoutCtx, namespace, name)
 	case "pod", "pods", "po":
-		resource, err = t.getPod(timeoutCtx, namespace, name)
+		resource, resourceErr = t.getPod(timeoutCtx, namespace, name)
 	case "configmap", "configmaps", "cm":
-		resource, err = t.getConfigMap(timeoutCtx, namespace, name)
+		resource, resourceErr = t.getConfigMap(timeoutCtx, namespace, name)
 	case "secret", "secrets":
-		resource, err = t.getSecret(timeoutCtx, namespace, name)
+		resource, resourceErr = t.getSecret(timeoutCtx, namespace, name)
 	case "ingress", "ingresses", "ing":
-		resource, err = t.getIngress(timeoutCtx, namespace, name)
+		resource, resourceErr = t.getIngress(timeoutCtx, namespace, name)
 	default:
 		// Use dynamic client fallback for unknown kinds
 		if t.dynamicClient == nil {
-			return map[string]any{
-				"error": fmt.Sprintf("unsupported resource kind: %s. Supported core kinds: deployment, service, pod, configmap, secret, ingress", kind),
-			}, nil
+			return errorResultf("unsupported resource kind: %s. Supported core kinds: deployment, service, pod, configmap, secret, ingress", kind)
 		}
-		resource, err = t.getDynamicResource(timeoutCtx, namespace, name, kind, apiVersion)
+		resource, resourceErr = t.getDynamicResource(timeoutCtx, namespace, name, kind, apiVersion)
 	}
 
-	if err != nil {
-		return map[string]any{"error": err.Error()}, nil
+	if resourceErr != nil {
+		return errorResult(resourceErr.Error())
 	}
 
 	return map[string]any{"resource": resource}, nil

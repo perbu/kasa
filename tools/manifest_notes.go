@@ -1,8 +1,6 @@
 package tools
 
 import (
-	"encoding/json"
-
 	"github.com/perbu/kasa/manifest"
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/tool"
@@ -74,20 +72,14 @@ func (t *SaveNotesTool) Declaration() *genai.FunctionDeclaration {
 
 // Run executes the tool.
 func (t *SaveNotesTool) Run(ctx tool.Context, args any) (map[string]any, error) {
-	argsMap, ok := args.(map[string]any)
-	if !ok {
-		if argsStr, ok := args.(string); ok {
-			if err := json.Unmarshal([]byte(argsStr), &argsMap); err != nil {
-				return map[string]any{"error": "invalid arguments format"}, nil
-			}
-		} else {
-			return map[string]any{"error": "invalid arguments type"}, nil
-		}
+	argsMap, err := parseToolArgs(args)
+	if err != nil {
+		return errorResult(err.Error())
 	}
 
 	content, ok := argsMap["content"].(string)
 	if !ok || content == "" {
-		return map[string]any{"error": "content is required"}, nil
+		return errorResult("content is required")
 	}
 
 	namespace, _ := argsMap["namespace"].(string)
@@ -95,12 +87,12 @@ func (t *SaveNotesTool) Run(ctx tool.Context, args any) (map[string]any, error) 
 
 	// Don't allow app without namespace
 	if app != "" && namespace == "" {
-		return map[string]any{"error": "namespace is required when app is specified"}, nil
+		return errorResult("namespace is required when app is specified")
 	}
 
 	path, err := t.manifest.SaveNotes(namespace, app, content)
 	if err != nil {
-		return map[string]any{"error": err.Error()}, nil
+		return errorResult(err.Error())
 	}
 
 	return map[string]any{

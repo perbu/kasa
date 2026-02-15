@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"encoding/json"
 	"path/filepath"
 
 	"github.com/perbu/kasa/manifest"
@@ -76,39 +75,31 @@ func (t *ReadManifestTool) Declaration() *genai.FunctionDeclaration {
 // Run executes the tool.
 func (t *ReadManifestTool) Run(ctx tool.Context, args any) (map[string]any, error) {
 	// Parse arguments
-	argsMap, ok := args.(map[string]any)
-	if !ok {
-		if argsStr, ok := args.(string); ok {
-			if err := json.Unmarshal([]byte(argsStr), &argsMap); err != nil {
-				return map[string]any{"error": "invalid arguments format"}, nil
-			}
-		} else {
-			return map[string]any{"error": "invalid arguments type"}, nil
-		}
+	argsMap, err := parseToolArgs(args)
+	if err != nil {
+		return errorResult(err.Error())
 	}
 
 	// Extract required parameters
 	namespace, ok := argsMap["namespace"].(string)
 	if !ok || namespace == "" {
-		return map[string]any{"error": "namespace is required"}, nil
+		return errorResult("namespace is required")
 	}
 
 	app, ok := argsMap["app"].(string)
 	if !ok || app == "" {
-		return map[string]any{"error": "app is required"}, nil
+		return errorResult("app is required")
 	}
 
 	resourceType, ok := argsMap["type"].(string)
 	if !ok || resourceType == "" {
-		return map[string]any{"error": "type is required"}, nil
+		return errorResult("type is required")
 	}
 
 	// Read manifest
 	content, err := t.manifest.ReadManifest(namespace, app, resourceType)
 	if err != nil {
-		return map[string]any{
-			"error": err.Error(),
-		}, nil
+		return errorResult(err.Error())
 	}
 
 	relPath := filepath.Join(namespace, app, resourceType+".yaml")

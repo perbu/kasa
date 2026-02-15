@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -93,16 +92,9 @@ func (t *ListPodsTool) Declaration() *genai.FunctionDeclaration {
 
 // Run executes the tool.
 func (t *ListPodsTool) Run(ctx tool.Context, args any) (map[string]any, error) {
-	// Parse arguments
-	argsMap, ok := args.(map[string]any)
-	if !ok {
-		if argsStr, ok := args.(string); ok {
-			if err := json.Unmarshal([]byte(argsStr), &argsMap); err != nil {
-				return map[string]any{"error": "invalid arguments format"}, nil
-			}
-		} else {
-			return map[string]any{"error": "invalid arguments type"}, nil
-		}
+	argsMap, err := parseToolArgs(args)
+	if err != nil {
+		return errorResult(err.Error())
 	}
 
 	namespace := ""
@@ -122,7 +114,7 @@ func (t *ListPodsTool) Run(ctx tool.Context, args any) (map[string]any, error) {
 		LabelSelector: labelSelector,
 	})
 	if err != nil {
-		return map[string]any{"error": err.Error()}, nil
+		return errorResult(err.Error())
 	}
 
 	result := make([]PodInfo, 0, len(pods.Items))

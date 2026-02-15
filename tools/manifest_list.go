@@ -1,8 +1,6 @@
 package tools
 
 import (
-	"encoding/json"
-
 	"github.com/perbu/kasa/manifest"
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/tool"
@@ -70,15 +68,9 @@ func (t *ListManifestsTool) Declaration() *genai.FunctionDeclaration {
 // Run executes the tool.
 func (t *ListManifestsTool) Run(ctx tool.Context, args any) (map[string]any, error) {
 	// Parse arguments
-	argsMap, ok := args.(map[string]any)
-	if !ok {
-		if argsStr, ok := args.(string); ok {
-			if err := json.Unmarshal([]byte(argsStr), &argsMap); err != nil {
-				argsMap = make(map[string]any)
-			}
-		} else {
-			argsMap = make(map[string]any)
-		}
+	argsMap, _ := parseToolArgs(args)
+	if argsMap == nil {
+		argsMap = make(map[string]any)
 	}
 
 	// Extract optional filters
@@ -88,9 +80,7 @@ func (t *ListManifestsTool) Run(ctx tool.Context, args any) (map[string]any, err
 	// List manifests
 	manifests, err := t.manifest.ListManifests(namespace, app)
 	if err != nil {
-		return map[string]any{
-			"error": err.Error(),
-		}, nil
+		return errorResult(err.Error())
 	}
 
 	result := map[string]any{
