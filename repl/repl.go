@@ -84,36 +84,27 @@ func (r *REPL) runAgentSync(ctx context.Context, state *SessionState, prompt str
 		status.Update(event)
 
 		if event != nil && event.Content != nil {
-			for _, part := range event.Content.Parts {
-				if part.FunctionCall != nil && part.FunctionCall.Name == "propose_plan" {
-					if state != nil && part.FunctionCall.Args != nil {
-						plan := ParsePlanFromResponse(part.FunctionCall.Args)
-						if plan != nil {
-							state.SetPendingPlan(plan)
-						}
-					}
-				}
+			ev := ProcessEventParts(event.Content.Parts)
 
-				if part.FunctionCall != nil && part.FunctionCall.Name == "ask_clarification" {
-					if state != nil && part.FunctionCall.Args != nil {
-						clarification := ParseClarificationFromResponse(part.FunctionCall.Args)
-						if clarification != nil {
-							state.PendingClarification = clarification
-						}
-					}
+			if state != nil {
+				if ev.Plan != nil {
+					state.SetPendingPlan(ev.Plan)
 				}
+				if ev.Clarification != nil {
+					state.PendingClarification = ev.Clarification
+				}
+			}
 
-				if part.Text != "" {
-					status.ClearForOutput()
-					if mdRenderer != nil {
-						rendered, renderErr := mdRenderer.Render(part.Text)
-						if renderErr == nil {
-							fmt.Print(rendered)
-							continue
-						}
+			for _, text := range ev.TextParts {
+				status.ClearForOutput()
+				if mdRenderer != nil {
+					rendered, renderErr := mdRenderer.Render(text)
+					if renderErr == nil {
+						fmt.Print(rendered)
+						continue
 					}
-					fmt.Print(part.Text)
 				}
+				fmt.Print(text)
 			}
 		}
 	}

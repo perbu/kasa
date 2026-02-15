@@ -530,45 +530,30 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 
 	// Process content parts
 	if event.Content != nil {
-		for _, part := range event.Content.Parts {
-			// Detect propose_plan
-			if part.FunctionCall != nil && part.FunctionCall.Name == "propose_plan" {
-				if part.FunctionCall.Args != nil {
-					plan := ParsePlanFromResponse(part.FunctionCall.Args)
-					if plan != nil {
-						m.state.SetPendingPlan(plan)
-					}
-				}
-			}
+		ev := ProcessEventParts(event.Content.Parts)
 
-			// Detect ask_clarification
-			if part.FunctionCall != nil && part.FunctionCall.Name == "ask_clarification" {
-				if part.FunctionCall.Args != nil {
-					clarification := ParseClarificationFromResponse(part.FunctionCall.Args)
-					if clarification != nil {
-						m.state.PendingClarification = clarification
-					}
-				}
-			}
+		if ev.Plan != nil {
+			m.state.SetPendingPlan(ev.Plan)
+		}
+		if ev.Clarification != nil {
+			m.state.PendingClarification = ev.Clarification
+		}
 
-			// Update status for function calls
-			if part.FunctionCall != nil {
-				m.toolName = part.FunctionCall.Name
-				m.toolReason = extractReason(part.FunctionCall.Args)
-				m.statusText = ""
-			}
+		// Update status based on the last tool call / response in this event
+		for _, tc := range ev.ToolCalls {
+			m.toolName = tc.Name
+			m.toolReason = truncateReason(tc.Reason)
+			m.statusText = ""
+		}
+		if len(ev.ToolResponses) > 0 {
+			m.toolName = ""
+			m.toolReason = ""
+			m.statusText = "Thinking..."
+		}
 
-			if part.FunctionResponse != nil {
-				m.toolName = ""
-				m.toolReason = ""
-				m.statusText = "Thinking..."
-			}
-
-			// Print text output
-			if part.Text != "" {
-				rendered := m.renderMarkdown(part.Text)
-				cmds = append(cmds, tea.Println(rendered))
-			}
+		for _, text := range ev.TextParts {
+			rendered := m.renderMarkdown(text)
+			cmds = append(cmds, tea.Println(rendered))
 		}
 	}
 
@@ -900,18 +885,14 @@ func formatDebugLines(event *session.Event) []string {
 	return lines
 }
 
-// extractReason gets the "reason" field from tool call args.
-func extractReason(args map[string]any) string {
-	if args == nil {
-		return ""
-	}
-	reason, ok := args["reason"].(string)
-	if !ok || reason == "" {
+// truncateReason truncates a reason string to a display-friendly length.
+func truncateReason(reason string) string {
+	if reason == "" {
 		return ""
 	}
 	maxLen := 50
 	if len(reason) > maxLen {
-		reason = reason[:maxLen-3] + "..."
+		return reason[:maxLen-3] + "..."
 	}
 	return reason
 }
