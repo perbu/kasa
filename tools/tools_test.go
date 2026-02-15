@@ -595,7 +595,7 @@ func TestImportResourceTool(t *testing.T) {
 	createTestNamespace(t, clientset, nsName)
 	mgr := newTestManifestManager(t)
 
-	tool := NewImportResourceTool(clientset, dynamicClient, mgr)
+	tool := NewImportResourceTool(dynamicClient, mgr)
 
 	t.Run("imports deployment", func(t *testing.T) {
 		createTestDeployment(t, clientset, nsName, "existing-deploy")
@@ -824,7 +824,7 @@ func TestDeleteResourceTool(t *testing.T) {
 	createTestNamespace(t, clientset, nsName)
 	mgr := newTestManifestManager(t)
 
-	tool := NewDeleteResourceTool(clientset, dynamicClient, mgr)
+	tool := NewDeleteResourceTool(dynamicClient, mgr)
 
 	t.Run("deletes deployment from cluster", func(t *testing.T) {
 		// Create deployment directly (not using helper to avoid cleanup conflict)

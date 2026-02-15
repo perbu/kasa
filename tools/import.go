@@ -12,21 +12,18 @@ import (
 	"google.golang.org/genai"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/yaml"
 )
 
 // ImportResourceTool provides the import_resource tool for the agent.
 type ImportResourceTool struct {
-	clientset     *kubernetes.Clientset
 	dynamicClient dynamic.Interface
 	manifest      *manifest.Manager
 }
 
 // NewImportResourceTool creates a new ImportResourceTool.
-func NewImportResourceTool(clientset *kubernetes.Clientset, dynamicClient dynamic.Interface, manifest *manifest.Manager) *ImportResourceTool {
+func NewImportResourceTool(dynamicClient dynamic.Interface, manifest *manifest.Manager) *ImportResourceTool {
 	return &ImportResourceTool{
-		clientset:     clientset,
 		dynamicClient: dynamicClient,
 		manifest:      manifest,
 	}
@@ -130,16 +127,12 @@ func (t *ImportResourceTool) Run(ctx tool.Context, args any) (map[string]any, er
 		overwrite = ow
 	}
 
-	// Normalize kind
+	// Normalize kind and validate
 	resourceType := NormalizeKindName(kind)
-	useDynamic := !isCoreTool(resourceType)
-
-	if useDynamic {
-		if _, found := LookupGVR(resourceType); !found && apiVersion == "" {
-			return map[string]any{
-				"error": fmt.Sprintf("unsupported resource kind: %s. Provide api_version for custom resources.", kind),
-			}, nil
-		}
+	if _, found := LookupGVR(resourceType); !found && apiVersion == "" {
+		return map[string]any{
+			"error": fmt.Sprintf("unsupported resource kind: %s. Provide api_version for custom resources.", kind),
+		}, nil
 	}
 
 	// Check if manifest already exists
@@ -151,21 +144,31 @@ func (t *ImportResourceTool) Run(ctx tool.Context, args any) (map[string]any, er
 		}, nil
 	}
 
-	// Fetch resource from cluster
+	// Fetch resource from cluster using dynamic client
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	var resourceMap map[string]any
-	var err error
+	gvr, found := BuildGVRFromKindAndAPIVersion(resourceType, apiVersion)
+	if !found && apiVersion == "" {
+		return map[string]any{
+			"error": fmt.Sprintf("unknown resource kind '%s'. Provide api_version for custom resources", kind),
+		}, nil
+	}
 
-	if useDynamic {
-		resourceMap, err = t.fetchDynamicResource(timeoutCtx, namespace, name, resourceType, apiVersion)
+	namespaced := IsNamespaced(resourceType)
+	var resourceClient dynamic.ResourceInterface
+	if namespaced {
+		resourceClient = t.dynamicClient.Resource(gvr).Namespace(namespace)
 	} else {
-		resourceMap, err = t.fetchResource(timeoutCtx, namespace, name, resourceType)
+		resourceClient = t.dynamicClient.Resource(gvr)
 	}
+
+	obj, err := resourceClient.Get(timeoutCtx, name, metav1.GetOptions{})
 	if err != nil {
-		return map[string]any{"error": err.Error()}, nil
+		return map[string]any{"error": fmt.Sprintf("failed to fetch %s/%s: %v", resourceType, name, err)}, nil
 	}
+
+	resourceMap := obj.Object
 
 	// Clean runtime fields
 	cleanForImport(resourceMap)
@@ -197,63 +200,4 @@ func (t *ImportResourceTool) Run(ctx tool.Context, args any) (map[string]any, er
 	}
 
 	return result, nil
-}
-
-// fetchResource fetches a resource from the cluster and converts it to a map.
-func (t *ImportResourceTool) fetchResource(ctx context.Context, namespace, name, resourceType string) (map[string]any, error) {
-	var obj any
-	var err error
-
-	switch resourceType {
-	case "deployment":
-		obj, err = t.clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
-	case "service":
-		obj, err = t.clientset.CoreV1().Services(namespace).Get(ctx, name, metav1.GetOptions{})
-	case "configmap":
-		obj, err = t.clientset.CoreV1().ConfigMaps(namespace).Get(ctx, name, metav1.GetOptions{})
-	case "secret":
-		obj, err = t.clientset.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
-	case "ingress":
-		obj, err = t.clientset.NetworkingV1().Ingresses(namespace).Get(ctx, name, metav1.GetOptions{})
-	default:
-		return nil, fmt.Errorf("unsupported resource type: %s", resourceType)
-	}
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch %s/%s: %v", resourceType, name, err)
-	}
-
-	// Convert to map via JSON
-	return toMap(obj)
-}
-
-// fetchDynamicResource fetches any resource using the dynamic client.
-func (t *ImportResourceTool) fetchDynamicResource(ctx context.Context, namespace, name, kind, apiVersion string) (map[string]any, error) {
-	if t.dynamicClient == nil {
-		return nil, fmt.Errorf("dynamic client not available")
-	}
-
-	// Build GVR from kind and api_version
-	gvr, found := BuildGVRFromKindAndAPIVersion(kind, apiVersion)
-	if !found && apiVersion == "" {
-		return nil, fmt.Errorf("unknown resource kind '%s'. Provide api_version for custom resources", kind)
-	}
-
-	// Check if resource is namespaced
-	namespaced := IsNamespaced(kind)
-
-	// Get the resource interface
-	var resourceClient dynamic.ResourceInterface
-	if namespaced {
-		resourceClient = t.dynamicClient.Resource(gvr).Namespace(namespace)
-	} else {
-		resourceClient = t.dynamicClient.Resource(gvr)
-	}
-
-	obj, err := resourceClient.Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch %s/%s: %v", kind, name, err)
-	}
-
-	return obj.Object, nil
 }

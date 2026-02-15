@@ -12,20 +12,17 @@ import (
 	"google.golang.org/genai"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/kubernetes"
 )
 
 // DeleteResourceTool provides the delete_resource tool for the agent.
 type DeleteResourceTool struct {
-	clientset     *kubernetes.Clientset
 	dynamicClient dynamic.Interface
 	manifest      *manifest.Manager
 }
 
 // NewDeleteResourceTool creates a new DeleteResourceTool.
-func NewDeleteResourceTool(clientset *kubernetes.Clientset, dynamicClient dynamic.Interface, manifest *manifest.Manager) *DeleteResourceTool {
+func NewDeleteResourceTool(dynamicClient dynamic.Interface, manifest *manifest.Manager) *DeleteResourceTool {
 	return &DeleteResourceTool{
-		clientset:     clientset,
 		dynamicClient: dynamicClient,
 		manifest:      manifest,
 	}
@@ -130,27 +127,36 @@ func (t *DeleteResourceTool) Run(ctx tool.Context, args any) (map[string]any, er
 		deleteManifest = dm
 	}
 
-	// Normalize resource type
+	// Normalize resource type and validate
 	normalizedType := NormalizeKindName(resourceType)
-	useDynamic := !isCoreTool(normalizedType) && normalizedType != "pod"
-
-	if useDynamic {
-		if _, found := LookupGVR(normalizedType); !found && apiVersion == "" {
-			return map[string]any{
-				"error": fmt.Sprintf("unsupported resource type: %s. Provide api_version for custom resources.", resourceType),
-			}, nil
-		}
+	if _, found := LookupGVR(normalizedType); !found && apiVersion == "" {
+		return map[string]any{
+			"error": fmt.Sprintf("unsupported resource type: %s. Provide api_version for custom resources.", resourceType),
+		}, nil
 	}
 
-	// Delete from cluster
+	// Delete from cluster using dynamic client
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	gvr, found := BuildGVRFromKindAndAPIVersion(normalizedType, apiVersion)
+	if !found && apiVersion == "" {
+		return map[string]any{
+			"error": fmt.Sprintf("unknown resource kind '%s'. Provide api_version for custom resources", resourceType),
+		}, nil
+	}
+
+	namespaced := IsNamespaced(normalizedType)
+	deletePolicy := metav1.DeletePropagationForeground
+	deleteOptions := metav1.DeleteOptions{
+		PropagationPolicy: &deletePolicy,
+	}
+
 	var err error
-	if useDynamic {
-		err = t.deleteDynamicResource(timeoutCtx, namespace, name, normalizedType, apiVersion)
+	if namespaced {
+		err = t.dynamicClient.Resource(gvr).Namespace(namespace).Delete(timeoutCtx, name, deleteOptions)
 	} else {
-		err = t.deleteFromCluster(timeoutCtx, namespace, name, normalizedType)
+		err = t.dynamicClient.Resource(gvr).Delete(timeoutCtx, name, deleteOptions)
 	}
 	if err != nil {
 		return map[string]any{
@@ -180,56 +186,4 @@ func (t *DeleteResourceTool) Run(ctx tool.Context, args any) (map[string]any, er
 	}
 
 	return result, nil
-}
-
-// deleteFromCluster deletes a resource from the Kubernetes cluster.
-func (t *DeleteResourceTool) deleteFromCluster(ctx context.Context, namespace, name, resourceType string) error {
-	deletePolicy := metav1.DeletePropagationForeground
-	deleteOptions := metav1.DeleteOptions{
-		PropagationPolicy: &deletePolicy,
-	}
-
-	switch resourceType {
-	case "pod":
-		return t.clientset.CoreV1().Pods(namespace).Delete(ctx, name, deleteOptions)
-	case "deployment":
-		return t.clientset.AppsV1().Deployments(namespace).Delete(ctx, name, deleteOptions)
-	case "service":
-		return t.clientset.CoreV1().Services(namespace).Delete(ctx, name, deleteOptions)
-	case "configmap":
-		return t.clientset.CoreV1().ConfigMaps(namespace).Delete(ctx, name, deleteOptions)
-	case "secret":
-		return t.clientset.CoreV1().Secrets(namespace).Delete(ctx, name, deleteOptions)
-	case "ingress":
-		return t.clientset.NetworkingV1().Ingresses(namespace).Delete(ctx, name, deleteOptions)
-	default:
-		return fmt.Errorf("unsupported resource type: %s", resourceType)
-	}
-}
-
-// deleteDynamicResource deletes any resource using the dynamic client.
-func (t *DeleteResourceTool) deleteDynamicResource(ctx context.Context, namespace, name, kind, apiVersion string) error {
-	if t.dynamicClient == nil {
-		return fmt.Errorf("dynamic client not available")
-	}
-
-	// Build GVR from kind and api_version
-	gvr, found := BuildGVRFromKindAndAPIVersion(kind, apiVersion)
-	if !found && apiVersion == "" {
-		return fmt.Errorf("unknown resource kind '%s'. Provide api_version for custom resources", kind)
-	}
-
-	// Check if resource is namespaced
-	namespaced := IsNamespaced(kind)
-
-	deletePolicy := metav1.DeletePropagationForeground
-	deleteOptions := metav1.DeleteOptions{
-		PropagationPolicy: &deletePolicy,
-	}
-
-	// Get the resource interface and delete
-	if namespaced {
-		return t.dynamicClient.Resource(gvr).Namespace(namespace).Delete(ctx, name, deleteOptions)
-	}
-	return t.dynamicClient.Resource(gvr).Delete(ctx, name, deleteOptions)
 }
