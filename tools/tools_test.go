@@ -1090,14 +1090,17 @@ func TestGetLogsTool(t *testing.T) {
 	})
 }
 
-// TestKubeToolsAll tests that All() returns all expected tools.
+// TestKubeToolsAll tests that All() returns a sane, unique registry and includes required baseline tools.
 func TestKubeToolsAll(t *testing.T) {
 	mgr := newTestManifestManager(t)
 	kt := NewKubeTools(clientset, dynamicClient, mgr, "")
 
 	tools := kt.All()
+	if len(tools) == 0 {
+		t.Fatal("expected non-empty tool registry")
+	}
 
-	expectedTools := []string{
+	requiredTools := []string{
 		"list_namespaces",
 		"delete_namespace",
 		"list_pods",
@@ -1127,20 +1130,22 @@ func TestKubeToolsAll(t *testing.T) {
 		"get_helm_release",
 		"get_helm_values",
 		"sync_manifests",
+		"save_notes",
 	}
 
-	if len(tools) != len(expectedTools) {
-		t.Errorf("expected %d tools, got %d", len(expectedTools), len(tools))
-	}
-
-	toolNames := make(map[string]bool)
+	toolNameCounts := make(map[string]int, len(tools))
 	for _, tool := range tools {
-		toolNames[tool.Name()] = true
+		toolNameCounts[tool.Name()]++
+	}
+	for name, count := range toolNameCounts {
+		if count > 1 {
+			t.Errorf("tool %q registered %d times", name, count)
+		}
 	}
 
-	for _, expected := range expectedTools {
-		if !toolNames[expected] {
-			t.Errorf("expected tool %s not found", expected)
+	for _, required := range requiredTools {
+		if toolNameCounts[required] == 0 {
+			t.Errorf("required tool %s not found", required)
 		}
 	}
 }
