@@ -206,12 +206,7 @@ func FetchAndCleanLiveResource(ctx context.Context, dynClient dynamic.Interface,
 
 	namespaced := IsNamespaced(kind)
 
-	var resourceClient dynamic.ResourceInterface
-	if namespaced {
-		resourceClient = dynClient.Resource(gvr).Namespace(namespace)
-	} else {
-		resourceClient = dynClient.Resource(gvr)
-	}
+	resourceClient := namespacedClient(dynClient, gvr, namespace, namespaced)
 
 	obj, err := resourceClient.Get(ctx, name, metav1.GetOptions{})
 	if err != nil {

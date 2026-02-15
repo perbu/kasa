@@ -145,12 +145,7 @@ func (t *ImportResourceTool) Run(ctx tool.Context, args any) (map[string]any, er
 	}
 
 	namespaced := IsNamespaced(resourceType)
-	var resourceClient dynamic.ResourceInterface
-	if namespaced {
-		resourceClient = t.dynamicClient.Resource(gvr).Namespace(namespace)
-	} else {
-		resourceClient = t.dynamicClient.Resource(gvr)
-	}
+	resourceClient := namespacedClient(t.dynamicClient, gvr, namespace, namespaced)
 
 	obj, getErr := resourceClient.Get(timeoutCtx, name, metav1.GetOptions{})
 	if getErr != nil {

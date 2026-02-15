@@ -146,12 +146,7 @@ func (t *ApplyManifestTool) Run(ctx tool.Context, args any) (map[string]any, err
 	defer cancel()
 
 	namespaced := IsNamespaced(gvk.Kind)
-	var resourceClient dynamic.ResourceInterface
-	if namespaced {
-		resourceClient = t.dynamicClient.Resource(gvr).Namespace(namespace)
-	} else {
-		resourceClient = t.dynamicClient.Resource(gvr)
-	}
+	resourceClient := namespacedClient(t.dynamicClient, gvr, namespace, namespaced)
 
 	createOptions := metav1.CreateOptions{}
 	updateOptions := metav1.UpdateOptions{}

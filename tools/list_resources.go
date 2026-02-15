@@ -123,17 +123,7 @@ func (t *ListResourcesTool) Run(ctx tool.Context, args any) (map[string]any, err
 		listOptions.LabelSelector = labelSelector
 	}
 
-	// Get the resource interface
-	var resourceClient dynamic.ResourceInterface
-	if namespaced && namespace != "" {
-		resourceClient = t.dynamicClient.Resource(gvr).Namespace(namespace)
-	} else if namespaced {
-		// List across all namespaces
-		resourceClient = t.dynamicClient.Resource(gvr)
-	} else {
-		// Cluster-scoped resource
-		resourceClient = t.dynamicClient.Resource(gvr)
-	}
+	resourceClient := namespacedClient(t.dynamicClient, gvr, namespace, namespaced)
 
 	list, err := resourceClient.List(timeoutCtx, listOptions)
 	if err != nil {

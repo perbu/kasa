@@ -173,12 +173,7 @@ func (t *DryRunApplyTool) dryRunUnstructured(content []byte, namespace, app, res
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	var resourceClient dynamic.ResourceInterface
-	if namespaced {
-		resourceClient = t.dynamicClient.Resource(gvr).Namespace(objNamespace)
-	} else {
-		resourceClient = t.dynamicClient.Resource(gvr)
-	}
+	resourceClient := namespacedClient(t.dynamicClient, gvr, objNamespace, namespaced)
 
 	dryRunCreate := metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}}
 	dryRunUpdate := metav1.UpdateOptions{DryRun: []string{metav1.DryRunAll}}

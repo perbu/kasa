@@ -156,13 +156,7 @@ func (t *ApplyResourceTool) Run(ctx tool.Context, args any) (map[string]any, err
 	// Determine resource type for manifest storage (lowercase kind)
 	resourceType := strings.ToLower(gvk.Kind)
 
-	// Get the resource interface
-	var resourceClient dynamic.ResourceInterface
-	if namespaced {
-		resourceClient = t.dynamicClient.Resource(gvr).Namespace(namespace)
-	} else {
-		resourceClient = t.dynamicClient.Resource(gvr)
-	}
+	resourceClient := namespacedClient(t.dynamicClient, gvr, namespace, namespaced)
 
 	// Build create/update options
 	createOptions := metav1.CreateOptions{}

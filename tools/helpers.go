@@ -3,6 +3,9 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 )
 
 // parseToolArgs normalizes the args parameter from ADK tool calls into a map.
@@ -33,4 +36,13 @@ func errorResult(msg string) (map[string]any, error) {
 // errorResultf returns a formatted tool error response.
 func errorResultf(format string, args ...any) (map[string]any, error) {
 	return map[string]any{"error": fmt.Sprintf(format, args...)}, nil
+}
+
+// namespacedClient returns the appropriate dynamic resource client for a given
+// GVR, scoped to a namespace for namespaced resources or cluster-wide otherwise.
+func namespacedClient(dc dynamic.Interface, gvr schema.GroupVersionResource, namespace string, namespaced bool) dynamic.ResourceInterface {
+	if namespaced && namespace != "" {
+		return dc.Resource(gvr).Namespace(namespace)
+	}
+	return dc.Resource(gvr)
 }

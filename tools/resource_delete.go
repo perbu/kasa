@@ -141,12 +141,7 @@ func (t *DeleteResourceTool) Run(ctx tool.Context, args any) (map[string]any, er
 		PropagationPolicy: &deletePolicy,
 	}
 
-	var deleteErr error
-	if namespaced {
-		deleteErr = t.dynamicClient.Resource(gvr).Namespace(namespace).Delete(timeoutCtx, name, deleteOptions)
-	} else {
-		deleteErr = t.dynamicClient.Resource(gvr).Delete(timeoutCtx, name, deleteOptions)
-	}
+	deleteErr := namespacedClient(t.dynamicClient, gvr, namespace, namespaced).Delete(timeoutCtx, name, deleteOptions)
 	if deleteErr != nil {
 		return map[string]any{
 			"success": false,

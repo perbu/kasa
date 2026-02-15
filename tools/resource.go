@@ -293,13 +293,7 @@ func (t *GetResourceTool) getDynamicResource(ctx context.Context, namespace, nam
 	// Check if resource is namespaced
 	namespaced := IsNamespaced(kind)
 
-	// Get the resource interface
-	var resourceClient dynamic.ResourceInterface
-	if namespaced {
-		resourceClient = t.dynamicClient.Resource(gvr).Namespace(namespace)
-	} else {
-		resourceClient = t.dynamicClient.Resource(gvr)
-	}
+	resourceClient := namespacedClient(t.dynamicClient, gvr, namespace, namespaced)
 
 	obj, err := resourceClient.Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
