@@ -69,7 +69,7 @@ func (k *KubeTools) All() []tool.Tool {
 		NewDeleteResourceTool(k.clientset, k.dynamicClient, k.manifest),
 		NewImportResourceTool(k.clientset, k.dynamicClient, k.manifest),
 		NewApplyManifestTool(k.dynamicClient, k.manifest),
-		NewDryRunApplyTool(k.clientset, k.dynamicClient, k.manifest),
+		NewDryRunApplyTool(k.dynamicClient, k.manifest),
 		NewProposePlanTool(),
 		NewAskClarificationTool(),
 		// Generic resource tools using dynamic client

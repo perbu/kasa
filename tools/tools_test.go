@@ -702,7 +702,7 @@ func TestDryRunApplyTool(t *testing.T) {
 	createTestNamespace(t, clientset, nsName)
 	mgr := newTestManifestManager(t)
 
-	tool := NewDryRunApplyTool(clientset, dynamicClient, mgr)
+	tool := NewDryRunApplyTool(dynamicClient, mgr)
 
 	t.Run("validates correct manifest", func(t *testing.T) {
 		// Create a valid deployment manifest

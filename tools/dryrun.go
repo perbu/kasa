@@ -4,33 +4,27 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/perbu/kasa/manifest"
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/tool"
 	"google.golang.org/genai"
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/kubernetes"
-	"sigs.k8s.io/yaml"
 )
 
 // DryRunApplyTool provides the dry_run_apply tool for the agent.
 type DryRunApplyTool struct {
-	clientset     *kubernetes.Clientset
 	dynamicClient dynamic.Interface
 	manifest      *manifest.Manager
 }
 
 // NewDryRunApplyTool creates a new DryRunApplyTool.
-func NewDryRunApplyTool(clientset *kubernetes.Clientset, dynamicClient dynamic.Interface, manifest *manifest.Manager) *DryRunApplyTool {
+func NewDryRunApplyTool(dynamicClient dynamic.Interface, manifest *manifest.Manager) *DryRunApplyTool {
 	return &DryRunApplyTool{
-		clientset:     clientset,
 		dynamicClient: dynamicClient,
 		manifest:      manifest,
 	}
@@ -83,7 +77,7 @@ func (t *DryRunApplyTool) Declaration() *genai.FunctionDeclaration {
 				},
 				"type": {
 					Type:        "string",
-					Description: "The resource type: deployment, service, configmap, secret, ingress (used when yaml is not provided)",
+					Description: "The resource type (e.g. deployment, service, configmap, secret, ingress, httproute, etc.) (used when yaml is not provided)",
 				},
 			},
 		},
@@ -105,16 +99,44 @@ func (t *DryRunApplyTool) Run(ctx tool.Context, args any) (map[string]any, error
 
 	// Check if inline YAML is provided
 	if yamlContent, ok := argsMap["yaml"].(string); ok && yamlContent != "" {
-		return t.runInlineYAML(yamlContent)
+		return t.dryRunUnstructured([]byte(yamlContent), "", "", "")
 	}
 
 	// Fall back to stored manifest path
 	return t.runStoredManifest(argsMap)
 }
 
-// runInlineYAML validates inline YAML using the dynamic client.
-func (t *DryRunApplyTool) runInlineYAML(yamlContent string) (map[string]any, error) {
-	obj, err := ParseYAMLToUnstructured([]byte(yamlContent))
+// runStoredManifest reads a manifest from storage and validates it via dry-run.
+func (t *DryRunApplyTool) runStoredManifest(argsMap map[string]any) (map[string]any, error) {
+	namespace, ok := argsMap["namespace"].(string)
+	if !ok || namespace == "" {
+		return map[string]any{"error": "namespace is required"}, nil
+	}
+
+	app, ok := argsMap["app"].(string)
+	if !ok || app == "" {
+		return map[string]any{"error": "app is required"}, nil
+	}
+
+	resourceType, ok := argsMap["type"].(string)
+	if !ok || resourceType == "" {
+		return map[string]any{"error": "type is required"}, nil
+	}
+
+	resourceType = NormalizeKindName(resourceType)
+
+	content, err := t.manifest.ReadManifest(namespace, app, resourceType)
+	if err != nil {
+		return map[string]any{"error": err.Error()}, nil
+	}
+
+	return t.dryRunUnstructured(content, namespace, app, resourceType)
+}
+
+// dryRunUnstructured validates YAML content using the dynamic client with server-side dry-run.
+// If namespace/app/resourceType are provided (stored manifest path), they are included in the result.
+func (t *DryRunApplyTool) dryRunUnstructured(content []byte, namespace, app, resourceType string) (map[string]any, error) {
+	obj, err := ParseYAMLToUnstructured(content)
 	if err != nil {
 		return map[string]any{
 			"valid":   false,
@@ -142,11 +164,17 @@ func (t *DryRunApplyTool) runInlineYAML(yamlContent string) (map[string]any, err
 	}
 
 	gvr := GVKToGVR(gvk)
-	namespace := obj.GetNamespace()
+	objNamespace := obj.GetNamespace()
 	namespaced := IsNamespaced(gvk.Kind)
-	if namespaced && namespace == "" {
-		namespace = "default"
+
+	// For stored manifest path, override namespace from args
+	if namespace != "" {
+		objNamespace = namespace
 		obj.SetNamespace(namespace)
+	}
+	if namespaced && objNamespace == "" {
+		objNamespace = "default"
+		obj.SetNamespace(objNamespace)
 	}
 
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -154,7 +182,7 @@ func (t *DryRunApplyTool) runInlineYAML(yamlContent string) (map[string]any, err
 
 	var resourceClient dynamic.ResourceInterface
 	if namespaced {
-		resourceClient = t.dynamicClient.Resource(gvr).Namespace(namespace)
+		resourceClient = t.dynamicClient.Resource(gvr).Namespace(objNamespace)
 	} else {
 		resourceClient = t.dynamicClient.Resource(gvr)
 	}
@@ -174,6 +202,9 @@ func (t *DryRunApplyTool) runInlineYAML(yamlContent string) (map[string]any, err
 			}, nil
 		}
 		obj.SetResourceVersion(existing.GetResourceVersion())
+		if strings.EqualFold(gvk.Kind, "Service") {
+			preserveServiceFields(existing, obj)
+		}
 		_, err = resourceClient.Update(timeoutCtx, obj, dryRunUpdate)
 	}
 
@@ -185,6 +216,17 @@ func (t *DryRunApplyTool) runInlineYAML(yamlContent string) (map[string]any, err
 		}, nil
 	}
 
+	// Build result — stored manifest path includes app/type, inline path includes kind/name
+	if app != "" {
+		return map[string]any{
+			"valid":     true,
+			"namespace": objNamespace,
+			"app":       app,
+			"type":      resourceType,
+			"message":   fmt.Sprintf("Manifest %s/%s/%s is valid", objNamespace, app, resourceType),
+		}, nil
+	}
+
 	result := map[string]any{
 		"valid":   true,
 		"kind":    gvk.Kind,
@@ -192,193 +234,8 @@ func (t *DryRunApplyTool) runInlineYAML(yamlContent string) (map[string]any, err
 		"message": fmt.Sprintf("%s/%s is valid", gvk.Kind, name),
 	}
 	if namespaced {
-		result["namespace"] = namespace
+		result["namespace"] = objNamespace
 	}
 	return result, nil
 }
 
-// runStoredManifest validates a manifest from storage using the typed client.
-func (t *DryRunApplyTool) runStoredManifest(argsMap map[string]any) (map[string]any, error) {
-	namespace, ok := argsMap["namespace"].(string)
-	if !ok || namespace == "" {
-		return map[string]any{"error": "namespace is required"}, nil
-	}
-
-	app, ok := argsMap["app"].(string)
-	if !ok || app == "" {
-		return map[string]any{"error": "app is required"}, nil
-	}
-
-	resourceType, ok := argsMap["type"].(string)
-	if !ok || resourceType == "" {
-		return map[string]any{"error": "type is required"}, nil
-	}
-
-	resourceType = NormalizeKindName(resourceType)
-
-	content, err := t.manifest.ReadManifest(namespace, app, resourceType)
-	if err != nil {
-		return map[string]any{"error": err.Error()}, nil
-	}
-
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	err = t.dryRunApply(timeoutCtx, namespace, resourceType, content)
-	if err != nil {
-		return map[string]any{
-			"valid":   false,
-			"error":   err.Error(),
-			"message": fmt.Sprintf("Manifest validation failed: %v", err),
-		}, nil
-	}
-
-	return map[string]any{
-		"valid":     true,
-		"namespace": namespace,
-		"app":       app,
-		"type":      resourceType,
-		"message":   fmt.Sprintf("Manifest %s/%s/%s is valid", namespace, app, resourceType),
-	}, nil
-}
-
-// dryRunApply validates a manifest using Kubernetes server-side dry-run (typed client).
-func (t *DryRunApplyTool) dryRunApply(ctx context.Context, namespace, resourceType string, content []byte) error {
-	dryRunOpts := metav1.CreateOptions{
-		DryRun: []string{metav1.DryRunAll},
-	}
-
-	switch resourceType {
-	case "deployment":
-		var deployment appsv1.Deployment
-		if err := yaml.Unmarshal(content, &deployment); err != nil {
-			return fmt.Errorf("invalid YAML: %v", err)
-		}
-		deployment.Namespace = namespace
-
-		_, err := t.clientset.AppsV1().Deployments(namespace).Create(ctx, &deployment, dryRunOpts)
-		if errors.IsAlreadyExists(err) {
-			return t.dryRunUpdate(ctx, namespace, resourceType, &deployment)
-		}
-		return err
-
-	case "service":
-		var service corev1.Service
-		if err := yaml.Unmarshal(content, &service); err != nil {
-			return fmt.Errorf("invalid YAML: %v", err)
-		}
-		service.Namespace = namespace
-
-		_, err := t.clientset.CoreV1().Services(namespace).Create(ctx, &service, dryRunOpts)
-		if errors.IsAlreadyExists(err) {
-			return t.dryRunUpdate(ctx, namespace, resourceType, &service)
-		}
-		return err
-
-	case "configmap":
-		var configmap corev1.ConfigMap
-		if err := yaml.Unmarshal(content, &configmap); err != nil {
-			return fmt.Errorf("invalid YAML: %v", err)
-		}
-		configmap.Namespace = namespace
-
-		_, err := t.clientset.CoreV1().ConfigMaps(namespace).Create(ctx, &configmap, dryRunOpts)
-		if errors.IsAlreadyExists(err) {
-			return t.dryRunUpdate(ctx, namespace, resourceType, &configmap)
-		}
-		return err
-
-	case "secret":
-		var secret corev1.Secret
-		if err := yaml.Unmarshal(content, &secret); err != nil {
-			return fmt.Errorf("invalid YAML: %v", err)
-		}
-		secret.Namespace = namespace
-
-		_, err := t.clientset.CoreV1().Secrets(namespace).Create(ctx, &secret, dryRunOpts)
-		if errors.IsAlreadyExists(err) {
-			return t.dryRunUpdate(ctx, namespace, resourceType, &secret)
-		}
-		return err
-
-	case "ingress":
-		var ingress networkingv1.Ingress
-		if err := yaml.Unmarshal(content, &ingress); err != nil {
-			return fmt.Errorf("invalid YAML: %v", err)
-		}
-		ingress.Namespace = namespace
-
-		_, err := t.clientset.NetworkingV1().Ingresses(namespace).Create(ctx, &ingress, dryRunOpts)
-		if errors.IsAlreadyExists(err) {
-			return t.dryRunUpdate(ctx, namespace, resourceType, &ingress)
-		}
-		return err
-
-	default:
-		return fmt.Errorf("unsupported resource type: %s", resourceType)
-	}
-}
-
-// dryRunUpdate performs a dry-run update for an existing resource.
-func (t *DryRunApplyTool) dryRunUpdate(ctx context.Context, namespace, resourceType string, obj any) error {
-	dryRunOpts := metav1.UpdateOptions{
-		DryRun: []string{metav1.DryRunAll},
-	}
-
-	switch resourceType {
-	case "deployment":
-		deployment := obj.(*appsv1.Deployment)
-		existing, err := t.clientset.AppsV1().Deployments(namespace).Get(ctx, deployment.Name, metav1.GetOptions{})
-		if err != nil {
-			return err
-		}
-		deployment.ResourceVersion = existing.ResourceVersion
-		_, err = t.clientset.AppsV1().Deployments(namespace).Update(ctx, deployment, dryRunOpts)
-		return err
-
-	case "service":
-		service := obj.(*corev1.Service)
-		existing, err := t.clientset.CoreV1().Services(namespace).Get(ctx, service.Name, metav1.GetOptions{})
-		if err != nil {
-			return err
-		}
-		service.ResourceVersion = existing.ResourceVersion
-		service.Spec.ClusterIP = existing.Spec.ClusterIP
-		service.Spec.ClusterIPs = existing.Spec.ClusterIPs
-		_, err = t.clientset.CoreV1().Services(namespace).Update(ctx, service, dryRunOpts)
-		return err
-
-	case "configmap":
-		configmap := obj.(*corev1.ConfigMap)
-		existing, err := t.clientset.CoreV1().ConfigMaps(namespace).Get(ctx, configmap.Name, metav1.GetOptions{})
-		if err != nil {
-			return err
-		}
-		configmap.ResourceVersion = existing.ResourceVersion
-		_, err = t.clientset.CoreV1().ConfigMaps(namespace).Update(ctx, configmap, dryRunOpts)
-		return err
-
-	case "secret":
-		secret := obj.(*corev1.Secret)
-		existing, err := t.clientset.CoreV1().Secrets(namespace).Get(ctx, secret.Name, metav1.GetOptions{})
-		if err != nil {
-			return err
-		}
-		secret.ResourceVersion = existing.ResourceVersion
-		_, err = t.clientset.CoreV1().Secrets(namespace).Update(ctx, secret, dryRunOpts)
-		return err
-
-	case "ingress":
-		ingress := obj.(*networkingv1.Ingress)
-		existing, err := t.clientset.NetworkingV1().Ingresses(namespace).Get(ctx, ingress.Name, metav1.GetOptions{})
-		if err != nil {
-			return err
-		}
-		ingress.ResourceVersion = existing.ResourceVersion
-		_, err = t.clientset.NetworkingV1().Ingresses(namespace).Update(ctx, ingress, dryRunOpts)
-		return err
-
-	default:
-		return fmt.Errorf("unsupported resource type: %s", resourceType)
-	}
-}
