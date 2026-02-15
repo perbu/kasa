@@ -209,7 +209,7 @@ func newTestManifestManager(t *testing.T) *manifest.Manager {
 
 	tempDir := t.TempDir()
 
-	mgr, err := manifest.NewManager(tempDir)
+	mgr, err := manifest.NewManager(tempDir, "test-context")
 	if err != nil {
 		t.Fatalf("failed to create manifest manager: %v", err)
 	}

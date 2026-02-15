@@ -9,8 +9,11 @@ import (
 )
 
 // Manager handles manifest file storage and git operations.
+// Files are stored under <baseDir>/<context>/<namespace>/<app>/<type>.yaml.
+// Git operations use baseDir as the repo root; file operations use contextDir().
 type Manager struct {
 	baseDir string
+	context string
 }
 
 // ManifestInfo contains metadata about a manifest file.
@@ -21,9 +24,10 @@ type ManifestInfo struct {
 	Path      string `json:"path"` // relative path from baseDir
 }
 
-// NewManager creates a new Manager with the given base directory.
+// NewManager creates a new Manager with the given base directory and cluster context.
 // The baseDir can contain ~ which will be expanded to the home directory.
-func NewManager(baseDir string) (*Manager, error) {
+// The context is used as a subdirectory under baseDir to scope manifests per cluster.
+func NewManager(baseDir, context string) (*Manager, error) {
 	// Expand ~ to home directory
 	if strings.HasPrefix(baseDir, "~") {
 		home, err := os.UserHomeDir()
@@ -38,19 +42,36 @@ func NewManager(baseDir string) (*Manager, error) {
 
 	m := &Manager{
 		baseDir: baseDir,
+		context: context,
 	}
 
-	// Ensure directory exists
+	// Ensure base directory exists (git repo root)
 	if err := os.MkdirAll(baseDir, 0755); err != nil {
 		return nil, fmt.Errorf("creating base directory: %w", err)
+	}
+
+	// Ensure context directory exists
+	if err := os.MkdirAll(m.contextDir(), 0755); err != nil {
+		return nil, fmt.Errorf("creating context directory: %w", err)
 	}
 
 	return m, nil
 }
 
-// BaseDir returns the base directory for manifests.
+// BaseDir returns the base directory for manifests (git repo root).
 func (m *Manager) BaseDir() string {
 	return m.baseDir
+}
+
+// Context returns the cluster context name.
+func (m *Manager) Context() string {
+	return m.context
+}
+
+// contextDir returns the context-scoped directory: baseDir/context.
+// All file operations (save, read, list, delete) use this as their root.
+func (m *Manager) contextDir() string {
+	return filepath.Join(m.baseDir, m.context)
 }
 
 // EnsureGitInit ensures the base directory is a git repository.
@@ -74,11 +95,11 @@ func (m *Manager) EnsureGitInit() error {
 }
 
 // SaveManifest saves a manifest file to the appropriate location.
-// The file is saved to <baseDir>/<namespace>/<appName>/<resourceType>.yaml
+// The file is saved to <baseDir>/<context>/<namespace>/<appName>/<resourceType>.yaml
 // Returns the path to the saved file.
 func (m *Manager) SaveManifest(namespace, appName, resourceType string, content []byte) (string, error) {
 	// Create directory structure
-	dir := filepath.Join(m.baseDir, namespace, appName)
+	dir := filepath.Join(m.contextDir(), namespace, appName)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", fmt.Errorf("creating manifest directory: %w", err)
 	}
@@ -155,9 +176,13 @@ func (m *Manager) GetStatus() (string, error) {
 // If app is non-empty, filters to that app name.
 func (m *Manager) ListManifests(namespace, app string) ([]ManifestInfo, error) {
 	var manifests []ManifestInfo
+	ctxDir := m.contextDir()
 
-	err := filepath.Walk(m.baseDir, func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(ctxDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
 			return err
 		}
 
@@ -171,8 +196,8 @@ func (m *Manager) ListManifests(namespace, app string) ([]ManifestInfo, error) {
 			return nil
 		}
 
-		// Get relative path from baseDir
-		relPath, err := filepath.Rel(m.baseDir, path)
+		// Get relative path from context dir
+		relPath, err := filepath.Rel(ctxDir, path)
 		if err != nil {
 			return err
 		}
@@ -215,7 +240,7 @@ func (m *Manager) ListManifests(namespace, app string) ([]ManifestInfo, error) {
 
 // ReadManifest reads and returns the content of a manifest file.
 func (m *Manager) ReadManifest(namespace, app, resourceType string) ([]byte, error) {
-	path := filepath.Join(m.baseDir, namespace, app, resourceType+".yaml")
+	path := filepath.Join(m.contextDir(), namespace, app, resourceType+".yaml")
 
 	content, err := os.ReadFile(path)
 	if err != nil {
@@ -230,13 +255,14 @@ func (m *Manager) ReadManifest(namespace, app, resourceType string) ([]byte, err
 
 // DeleteManifest deletes a manifest file and stages the deletion in git.
 // If resourceType is empty, deletes all manifests for the app.
-// Returns the list of deleted file paths.
+// Returns the list of deleted file paths (relative to context dir).
 func (m *Manager) DeleteManifest(namespace, app, resourceType string) ([]string, error) {
 	var deleted []string
+	ctxDir := m.contextDir()
 
 	if resourceType != "" {
 		// Delete single manifest
-		path := filepath.Join(m.baseDir, namespace, app, resourceType+".yaml")
+		path := filepath.Join(ctxDir, namespace, app, resourceType+".yaml")
 		relPath := filepath.Join(namespace, app, resourceType+".yaml")
 
 		if err := os.Remove(path); err != nil {
@@ -246,15 +272,16 @@ func (m *Manager) DeleteManifest(namespace, app, resourceType string) ([]string,
 			return nil, fmt.Errorf("deleting manifest: %w", err)
 		}
 
-		// Stage the deletion
-		if err := m.stageDeletion(relPath); err != nil {
+		// Stage the deletion (git path is relative to baseDir)
+		gitRelPath := filepath.Join(m.context, namespace, app, resourceType+".yaml")
+		if err := m.stageDeletion(gitRelPath); err != nil {
 			return nil, fmt.Errorf("staging deletion: %w", err)
 		}
 
 		deleted = append(deleted, relPath)
 	} else {
 		// Delete all manifests for the app
-		appDir := filepath.Join(m.baseDir, namespace, app)
+		appDir := filepath.Join(ctxDir, namespace, app)
 		entries, err := os.ReadDir(appDir)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -275,7 +302,8 @@ func (m *Manager) DeleteManifest(namespace, app, resourceType string) ([]string,
 				return nil, fmt.Errorf("deleting manifest %s: %w", relPath, err)
 			}
 
-			if err := m.stageDeletion(relPath); err != nil {
+			gitRelPath := filepath.Join(m.context, namespace, app, entry.Name())
+			if err := m.stageDeletion(gitRelPath); err != nil {
 				return nil, fmt.Errorf("staging deletion of %s: %w", relPath, err)
 			}
 
@@ -284,13 +312,13 @@ func (m *Manager) DeleteManifest(namespace, app, resourceType string) ([]string,
 	}
 
 	// Clean up empty app directory
-	appDir := filepath.Join(m.baseDir, namespace, app)
+	appDir := filepath.Join(ctxDir, namespace, app)
 	if isEmpty, _ := isDirEmpty(appDir); isEmpty {
 		os.Remove(appDir)
 	}
 
 	// Clean up empty namespace directory
-	nsDir := filepath.Join(m.baseDir, namespace)
+	nsDir := filepath.Join(ctxDir, namespace)
 	if isEmpty, _ := isDirEmpty(nsDir); isEmpty {
 		os.Remove(nsDir)
 	}
@@ -422,32 +450,38 @@ func (m *Manager) StagedDiff() (string, error) {
 
 // ManifestExists checks if a manifest file already exists.
 func (m *Manager) ManifestExists(namespace, app, resourceType string) bool {
-	path := filepath.Join(m.baseDir, namespace, app, resourceType+".yaml")
+	path := filepath.Join(m.contextDir(), namespace, app, resourceType+".yaml")
 	_, err := os.Stat(path)
 	return err == nil
 }
 
-// ReadNotes reads KASA.md files at up to three levels (top-level, namespace, app)
+// ReadNotes reads KASA.md files at up to four levels (top-level, context, namespace, app)
 // and returns their concatenated content with level headers.
 // Missing files are silently skipped. Returns empty string if no notes exist.
 func (m *Manager) ReadNotes(namespace, app string) string {
 	var sections []string
+	ctxDir := m.contextDir()
 
-	// Top-level notes
+	// Top-level notes (repo root)
 	if content, err := os.ReadFile(filepath.Join(m.baseDir, "KASA.md")); err == nil {
 		sections = append(sections, "## Deployment Notes (top-level)\n"+string(content))
 	}
 
+	// Context-level notes
+	if content, err := os.ReadFile(filepath.Join(ctxDir, "KASA.md")); err == nil {
+		sections = append(sections, fmt.Sprintf("## Deployment Notes (%s)\n%s", m.context, string(content)))
+	}
+
 	// Namespace-level notes
 	if namespace != "" {
-		if content, err := os.ReadFile(filepath.Join(m.baseDir, namespace, "KASA.md")); err == nil {
+		if content, err := os.ReadFile(filepath.Join(ctxDir, namespace, "KASA.md")); err == nil {
 			sections = append(sections, fmt.Sprintf("## Deployment Notes (%s)\n%s", namespace, string(content)))
 		}
 	}
 
 	// App-level notes
 	if namespace != "" && app != "" {
-		if content, err := os.ReadFile(filepath.Join(m.baseDir, namespace, app, "KASA.md")); err == nil {
+		if content, err := os.ReadFile(filepath.Join(ctxDir, namespace, app, "KASA.md")); err == nil {
 			sections = append(sections, fmt.Sprintf("## Deployment Notes (%s/%s)\n%s", namespace, app, string(content)))
 		}
 	}
@@ -456,18 +490,19 @@ func (m *Manager) ReadNotes(namespace, app string) string {
 }
 
 // SaveNotes writes a KASA.md file at the appropriate level and stages it with git.
-// If both namespace and app are empty, writes top-level. If only app is empty, writes namespace-level.
+// If both namespace and app are empty, writes context-level. If only app is empty, writes namespace-level.
 // If both are set, writes app-level.
 // Returns the file path.
 func (m *Manager) SaveNotes(namespace, app, content string) (string, error) {
+	ctxDir := m.contextDir()
 	var dir string
 	switch {
 	case namespace == "" && app == "":
-		dir = m.baseDir
+		dir = ctxDir
 	case app == "":
-		dir = filepath.Join(m.baseDir, namespace)
+		dir = filepath.Join(ctxDir, namespace)
 	default:
-		dir = filepath.Join(m.baseDir, namespace, app)
+		dir = filepath.Join(ctxDir, namespace, app)
 	}
 
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -487,11 +522,12 @@ func (m *Manager) SaveNotes(namespace, app, content string) (string, error) {
 }
 
 // DeleteNamespace deletes all manifests for a namespace and stages the deletions.
-// Returns the list of deleted file paths.
+// Returns the list of deleted file paths (relative to context dir).
 func (m *Manager) DeleteNamespace(namespace string) ([]string, error) {
 	var deleted []string
+	ctxDir := m.contextDir()
 
-	nsDir := filepath.Join(m.baseDir, namespace)
+	nsDir := filepath.Join(ctxDir, namespace)
 
 	// Check if namespace directory exists
 	if _, err := os.Stat(nsDir); os.IsNotExist(err) {
@@ -514,8 +550,14 @@ func (m *Manager) DeleteNamespace(namespace string) ([]string, error) {
 			return nil
 		}
 
-		// Get relative path from baseDir
-		relPath, err := filepath.Rel(m.baseDir, path)
+		// Get relative path from baseDir (for git staging)
+		gitRelPath, err := filepath.Rel(m.baseDir, path)
+		if err != nil {
+			return err
+		}
+
+		// Get relative path from context dir (for return value)
+		relPath, err := filepath.Rel(ctxDir, path)
 		if err != nil {
 			return err
 		}
@@ -526,7 +568,7 @@ func (m *Manager) DeleteNamespace(namespace string) ([]string, error) {
 		}
 
 		// Stage the deletion
-		if err := m.stageDeletion(relPath); err != nil {
+		if err := m.stageDeletion(gitRelPath); err != nil {
 			return fmt.Errorf("staging deletion of %s: %w", relPath, err)
 		}
 

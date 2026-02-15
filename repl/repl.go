@@ -133,7 +133,7 @@ func (r *REPL) runAgentSync(ctx context.Context, state *SessionState, prompt str
 }
 
 // PrintWelcome displays the colorized logo and session info.
-func (r *REPL) PrintWelcome(version, model string, toolCount int, deploymentsDir string) {
+func (r *REPL) PrintWelcome(version, model string, toolCount int, deploymentsDir, kubeContext string) {
 	// Colorized ASCII art logo
 	fmt.Print(RenderLogo(version))
 	fmt.Println()
@@ -143,21 +143,22 @@ func (r *REPL) PrintWelcome(version, model string, toolCount int, deploymentsDir
 |---------|-------|
 | Model | %s |
 | Tools | %d |
+| Context | %s |
 | Deployments | %s |
 
 Commands: **/approve** **/abort** plans · **/commit** **/push** **/status** manifests · **/debug** **/dump** **/clear** · **exit**
-`, model, toolCount, deploymentsDir)
+`, model, toolCount, kubeContext, deploymentsDir)
 
 	renderer, err := setupMarkdownRenderer()
 	if err != nil {
-		fmt.Printf("Model: %s | Tools: %d | Deployments: %s\n", model, toolCount, deploymentsDir)
+		fmt.Printf("Model: %s | Tools: %d | Context: %s | Deployments: %s\n", model, toolCount, kubeContext, deploymentsDir)
 		fmt.Printf("Type 'exit' or 'quit' to exit.\n\n")
 		return
 	}
 
 	rendered, err := renderer.Render(info)
 	if err != nil {
-		fmt.Printf("Model: %s | Tools: %d | Deployments: %s\n", model, toolCount, deploymentsDir)
+		fmt.Printf("Model: %s | Tools: %d | Context: %s | Deployments: %s\n", model, toolCount, kubeContext, deploymentsDir)
 		fmt.Printf("Type 'exit' or 'quit' to exit.\n\n")
 		return
 	}

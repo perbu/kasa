@@ -51,13 +51,13 @@ func main() {
 	}
 
 	// Initialize Kubernetes client
-	clientset, dynamicClient, err := initKubeClient(cfg.Kubernetes.Kubeconfig, cfg.Kubernetes.Context)
+	clientset, dynamicClient, kubeContext, err := initKubeClient(cfg.Kubernetes.Kubeconfig, cfg.Kubernetes.Context)
 	if err != nil {
 		log.Fatalf("Failed to initialize Kubernetes client: %v", err)
 	}
 
-	// Initialize manifest manager
-	manifestMgr, err := manifest.NewManager(cfg.Deployments.Directory)
+	// Initialize manifest manager (scoped to active cluster context)
+	manifestMgr, err := manifest.NewManager(cfg.Deployments.Directory, kubeContext)
 	if err != nil {
 		log.Fatalf("Failed to initialize manifest manager: %v", err)
 	}
@@ -185,7 +185,7 @@ func main() {
 	}
 
 	// Interactive REPL mode - print fancy welcome
-	replInstance.PrintWelcome(strings.TrimSpace(version), cfg.Agent.Model, len(kubeTools.All()), manifestMgr.BaseDir())
+	replInstance.PrintWelcome(strings.TrimSpace(version), cfg.Agent.Model, len(kubeTools.All()), manifestMgr.BaseDir(), kubeContext)
 
 	// Display drift scan results to the user
 	if scanResults != nil {
@@ -220,8 +220,9 @@ func runInit() {
 	fmt.Println("Edit it to add your Google API key and customize settings.")
 }
 
-// initKubeClient initializes a Kubernetes clientset and dynamic client.
-func initKubeClient(kubeconfig, kubecontext string) (*kubernetes.Clientset, dynamic.Interface, error) {
+// initKubeClient initializes a Kubernetes clientset, dynamic client, and resolves
+// the active context name.
+func initKubeClient(kubeconfig, kubecontext string) (*kubernetes.Clientset, dynamic.Interface, string, error) {
 	// Use default kubeconfig path if not specified
 	if kubeconfig == "" {
 		if home := homedir.HomeDir(); home != "" {
@@ -236,23 +237,35 @@ func initKubeClient(kubeconfig, kubecontext string) (*kubernetes.Clientset, dyna
 		configOverrides.CurrentContext = kubecontext
 	}
 
-	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-		loadingRules, configOverrides).ClientConfig()
+	clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		loadingRules, configOverrides)
+
+	config, err := clientConfig.ClientConfig()
 	if err != nil {
-		return nil, nil, fmt.Errorf("building kubeconfig: %w", err)
+		return nil, nil, "", fmt.Errorf("building kubeconfig: %w", err)
+	}
+
+	// Resolve the active context name
+	rawConfig, err := clientConfig.RawConfig()
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("reading raw kubeconfig: %w", err)
+	}
+	resolvedContext := rawConfig.CurrentContext
+	if kubecontext != "" {
+		resolvedContext = kubecontext
 	}
 
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		return nil, nil, fmt.Errorf("creating kubernetes client: %w", err)
+		return nil, nil, "", fmt.Errorf("creating kubernetes client: %w", err)
 	}
 
 	dynamicClient, err := dynamic.NewForConfig(config)
 	if err != nil {
-		return nil, nil, fmt.Errorf("creating dynamic client: %w", err)
+		return nil, nil, "", fmt.Errorf("creating dynamic client: %w", err)
 	}
 
-	return clientset, dynamicClient, nil
+	return clientset, dynamicClient, resolvedContext, nil
 }
 
 // printDriftScanResults renders the drift scan results as a markdown table via glamour.

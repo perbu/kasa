@@ -235,10 +235,10 @@ For unknown CRDs, provide the `api_version` parameter (e.g., `gateway.networking
 
 ### Manifest Package
 
-Handles manifest file storage with git integration. Files are stored as `<baseDir>/<namespace>/<app>/<type>.yaml`.
+Handles manifest file storage with git integration. Files are stored as `<baseDir>/<context>/<namespace>/<app>/<type>.yaml`. The context is the Kubernetes cluster context name, resolved from kubeconfig at startup. The git repo lives at `baseDir`; file operations are scoped to the context subdirectory.
 
 ```go
-manager, _ := manifest.NewManager("~/deployments")
+manager, _ := manifest.NewManager("~/deployments", "my-cluster-context")
 manager.EnsureGitInit()
 
 // Save and stage a manifest

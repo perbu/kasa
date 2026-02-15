@@ -4,7 +4,9 @@
 kubernetes:
   # Path to kubeconfig file (empty = default ~/.kube/config)
   kubeconfig: ""
-  # Kubernetes context to use (empty = current context)
+  # Kubernetes context to use (empty = current context from kubeconfig)
+  # The context name is also used as a subfolder for manifest storage,
+  # so each cluster's manifests are kept separate.
   context: ""
 
 agent:
