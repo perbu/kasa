@@ -31,6 +31,12 @@ type cmdResultMsg struct {
 	lines []string
 }
 
+// contextSwitchMsg carries the result of an asynchronous context switch.
+type contextSwitchMsg struct {
+	result *ContextSwitchResult
+	err    error
+}
+
 // model is the bubbletea Model for the interactive REPL.
 type model struct {
 	textarea textarea.Model
@@ -73,6 +79,12 @@ type model struct {
 	showClarification bool
 	clarModal         clarificationModal
 
+	// context selector modal
+	showContextSelect bool
+	ctxModal          contextSelectorModal
+	listContexts      ContextListFunc
+	switchContext      ContextSwitchFunc
+
 	quitting bool
 }
 
@@ -88,10 +100,15 @@ var uncommittedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Faint
 // debugStyle is the dim gray style for debug output lines.
 var debugStyle = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("8"))
 
-func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, modelName string) model {
+func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, modelName string, listContexts ContextListFunc, switchContext ContextSwitchFunc) model {
 	ta := textarea.New()
 	ta.Placeholder = "Type a message..."
-	ta.Prompt = "> "
+	ta.SetPromptFunc(2, func(line int) string {
+		if line == 0 {
+			return "> "
+		}
+		return "  "
+	})
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0
 	ta.SetHeight(5)
@@ -140,6 +157,8 @@ func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manife
 		apiKey:         apiKey,
 		modelName:      modelName,
 		eventCh:        make(chan agentEventMsg, 64),
+		listContexts:   listContexts,
+		switchContext:   switchContext,
 	}
 }
 
@@ -161,6 +180,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case clarificationCancelMsg:
 		return m.handleClarificationCancel()
 
+	// Handle context selector modal results
+	case contextSelectedMsg:
+		return m.handleContextSelected(msg)
+	case contextCancelMsg:
+		return m.handleContextCancel()
+	case contextSwitchMsg:
+		return m.handleContextSwitch(msg)
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -176,6 +203,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		// Ctrl+C: cancel agent, dismiss modal, or quit
 		if msg.String() == "ctrl+c" {
+			if m.showContextSelect {
+				return m.handleContextCancel()
+			}
 			if m.showClarification {
 				return m.handleClarificationCancel()
 			}
@@ -187,6 +217,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			m.history.Save()
 			return m, tea.Quit
+		}
+
+		// Delegate to context selector modal when active
+		if m.showContextSelect {
+			var cmd tea.Cmd
+			m.ctxModal, cmd = m.ctxModal.Update(msg)
+			return m, cmd
 		}
 
 		// Delegate to clarification modal when active
@@ -276,6 +313,11 @@ func (m model) View() string {
 		return ""
 	}
 
+	// Show context selector modal instead of normal UI
+	if m.showContextSelect {
+		return m.ctxModal.View() + "\n"
+	}
+
 	// Show clarification modal instead of normal UI
 	if m.showClarification {
 		return m.clarModal.View() + "\n"
@@ -333,17 +375,14 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 	// Echo the user input above
 	cmds = append(cmds, tea.Println("> "+input))
 
-	// Handle exit/quit
-	if input == "exit" || input == "quit" {
+	// Handle commands
+	switch strings.ToLower(input) {
+	case "/exit", "/quit":
 		m.history.Save()
 		cmds = append(cmds, tea.Println("Goodbye!"))
 		m.quitting = true
 		cmds = append(cmds, tea.Quit)
 		return m, tea.Batch(cmds...)
-	}
-
-	// Handle plan approval commands
-	switch strings.ToLower(input) {
 	case "/approve":
 		if m.state.HasPendingPlan() {
 			plan := m.state.ApprovePlan()
@@ -360,8 +399,7 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 		if m.state.HasPendingPlan() {
 			m.state.RejectPlan()
 			cmds = append(cmds, tea.Println("Plan rejected."))
-			m.updatePrompt()
-		} else {
+				} else {
 			cmds = append(cmds, tea.Println("No pending plan to reject."))
 		}
 		return m, tea.Batch(cmds...)
@@ -425,6 +463,53 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 		m.state = NewSessionState()
 		cmds = append(cmds, tea.Println("Context cleared."))
 		return m, tea.Batch(cmds...)
+
+	case "/contexts":
+		if m.listContexts == nil {
+			cmds = append(cmds, tea.Println("Context listing not available."))
+			return m, tea.Batch(cmds...)
+		}
+		ctxs, err := m.listContexts()
+		if err != nil {
+			cmds = append(cmds, tea.Println(fmt.Sprintf("Failed to list contexts: %v", err)))
+			return m, tea.Batch(cmds...)
+		}
+		for _, c := range ctxs {
+			marker := "  "
+			if c.Active {
+				marker = "● "
+			}
+			line := fmt.Sprintf("%s%s", marker, c.Name)
+			if c.Cluster != "" && c.Cluster != c.Name {
+				line += fmt.Sprintf(" (%s)", c.Cluster)
+			}
+			cmds = append(cmds, tea.Println(line))
+		}
+		return m, tea.Batch(cmds...)
+
+	case "/context":
+		if m.listContexts == nil || m.switchContext == nil {
+			cmds = append(cmds, tea.Println("Context switching not available."))
+			return m, tea.Batch(cmds...)
+		}
+		ctxs, err := m.listContexts()
+		if err != nil {
+			cmds = append(cmds, tea.Println(fmt.Sprintf("Failed to list contexts: %v", err)))
+			return m, tea.Batch(cmds...)
+		}
+		if len(ctxs) == 0 {
+			cmds = append(cmds, tea.Println("No contexts found."))
+			return m, tea.Batch(cmds...)
+		}
+		m.showContextSelect = true
+		m.ctxModal = newContextSelectorModal(ctxs, m.width)
+		return m, tea.Batch(cmds...)
+
+	default:
+		if strings.HasPrefix(strings.ToLower(input), "/") {
+			cmds = append(cmds, tea.Println(fmt.Sprintf("Unknown command: %s", input)))
+			return m, tea.Batch(cmds...)
+		}
 	}
 
 	// If there's a pending plan, warn
@@ -490,8 +575,7 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 		m.agentCancel = nil
 		m.state.PendingClarification = nil // clear stale clarification from partial run
 		cmds = append(cmds, m.textarea.Focus())
-		m.updatePrompt()
-		cmds = append(cmds, tea.Println(fmt.Sprintf("Error: %v", msg.err)))
+			cmds = append(cmds, tea.Println(fmt.Sprintf("Error: %v", msg.err)))
 		return m, tea.Batch(cmds...)
 	}
 
@@ -504,8 +588,7 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 			m.showClarification = true
 			m.clarModal = newClarificationModal(m.state.PendingClarification, m.width)
 			// Don't focus textarea — modal handles input
-			m.updatePrompt()
-			return m, tea.Batch(cmds...)
+					return m, tea.Batch(cmds...)
 		}
 
 		cmds = append(cmds, m.textarea.Focus())
@@ -520,8 +603,7 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 			m.state.Reset()
 		}
 
-		m.updatePrompt()
-		return m, tea.Batch(cmds...)
+			return m, tea.Batch(cmds...)
 	}
 
 	event := msg.event
@@ -599,7 +681,71 @@ func (m model) handleClarificationCancel() (tea.Model, tea.Cmd) {
 		m.textarea.Focus(),
 		tea.Println("Clarification cancelled."),
 	}
-	m.updatePrompt()
+	return m, tea.Batch(cmds...)
+}
+
+// handleContextSelected starts the async context switch after the user picks a context.
+func (m model) handleContextSelected(msg contextSelectedMsg) (tea.Model, tea.Cmd) {
+	m.showContextSelect = false
+	m.agentBusy = true
+	m.statusText = "Switching context..."
+	m.toolName = ""
+	m.toolReason = ""
+	m.textarea.Blur()
+
+	switchFn := m.switchContext
+	name := msg.name
+	cmd := func() tea.Msg {
+		result, err := switchFn(name)
+		return contextSwitchMsg{result: result, err: err}
+	}
+	return m, tea.Batch(cmd, m.spinner.Tick)
+}
+
+// handleContextCancel dismisses the context selector without switching.
+func (m model) handleContextCancel() (tea.Model, tea.Cmd) {
+	m.showContextSelect = false
+	cmds := []tea.Cmd{
+		m.textarea.Focus(),
+		tea.Println("Context switch cancelled."),
+	}
+	return m, tea.Batch(cmds...)
+}
+
+// handleContextSwitch processes the result of an async context switch.
+func (m model) handleContextSwitch(msg contextSwitchMsg) (tea.Model, tea.Cmd) {
+	m.agentBusy = false
+	var cmds []tea.Cmd
+
+	if msg.err != nil {
+		cmds = append(cmds, m.textarea.Focus())
+		cmds = append(cmds, tea.Println(fmt.Sprintf("Context switch failed: %v", msg.err)))
+		return m, tea.Batch(cmds...)
+	}
+
+	// Swap the rebuilt stack into the model.
+	m.runner = msg.result.Runner
+	m.sessionService = msg.result.SessionService
+	m.manifest = msg.result.Manifest
+
+	// Reset session (same as /clear).
+	ctx := context.Background()
+	_ = m.sessionService.Delete(ctx, &session.DeleteRequest{
+		AppName:   "kasa",
+		UserID:    "user1",
+		SessionID: m.sessionID,
+	})
+	m.sessionCounter++
+	m.sessionID = fmt.Sprintf("session%d", m.sessionCounter)
+	_, _ = m.sessionService.Create(ctx, &session.CreateRequest{
+		AppName:   "kasa",
+		UserID:    "user1",
+		SessionID: m.sessionID,
+	})
+	m.state = NewSessionState()
+
+	cmds = append(cmds, m.textarea.Focus())
+	cmds = append(cmds, tea.Println(fmt.Sprintf("Switched to context: %s", msg.result.ContextName)))
 	return m, tea.Batch(cmds...)
 }
 
@@ -859,10 +1005,6 @@ func (m *model) buildStatusLine() string {
 	return status
 }
 
-// updatePrompt sets the textarea prompt based on session state.
-func (m *model) updatePrompt() {
-	m.textarea.Prompt = "> "
-}
 
 // separatorWidth returns the width for the horizontal separator line.
 func (m model) separatorWidth() int {

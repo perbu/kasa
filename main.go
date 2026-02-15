@@ -169,8 +169,107 @@ func main() {
 		log.Fatalf("Failed to create session: %v", err)
 	}
 
+	// Resolve kubeconfig path for context listing/switching.
+	kubeconfigPath := cfg.Kubernetes.Kubeconfig
+	if kubeconfigPath == "" {
+		if home := homedir.HomeDir(); home != "" {
+			kubeconfigPath = filepath.Join(home, ".kube", "config")
+		}
+	}
+	deployDir := cfg.Deployments.Directory
+
+	// Mutable: tracks the active context so /contexts shows the right marker.
+	activeKubeContext := kubeContext
+
+	listContextsFn := func() ([]repl.ContextInfo, error) {
+		ctxs, _, err := listKubeContexts(kubeconfigPath)
+		if err != nil {
+			return nil, err
+		}
+		// Override the active flag to match the running context (which may
+		// differ from the kubeconfig's current-context after a switch).
+		for i := range ctxs {
+			ctxs[i].Active = ctxs[i].Name == activeKubeContext
+		}
+		return ctxs, nil
+	}
+
+	switchContextFn := func(contextName string) (*repl.ContextSwitchResult, error) {
+		// 1. Build new Kubernetes clients.
+		newClientset, newDynamic, resolvedCtx, err := initKubeClient(kubeconfigPath, contextName)
+		if err != nil {
+			return nil, fmt.Errorf("initializing kube client: %w", err)
+		}
+
+		// 2. New manifest manager.
+		newManifest, err := manifest.NewManager(deployDir, resolvedCtx)
+		if err != nil {
+			return nil, fmt.Errorf("initializing manifest manager: %w", err)
+		}
+		if err := newManifest.EnsureGitInit(); err != nil {
+			return nil, fmt.Errorf("initializing git: %w", err)
+		}
+		if cfg.Deployments.Remote != "" {
+			if err := newManifest.SetupRemote(cfg.Deployments.Remote); err != nil {
+				return nil, fmt.Errorf("setting up remote: %w", err)
+			}
+			_ = newManifest.Pull() // best-effort
+		}
+
+		// 3. New tools.
+		newJinaKey := cfg.JinaAPIKey()
+		newKubeTools := tools.NewKubeTools(newClientset, newDynamic, newManifest, newJinaKey)
+		newToolDocs := newKubeTools.GenerateToolDocs()
+		newSysPrompt := strings.Replace(cfg.Prompts.System, "{{TOOL_DOCS}}", newToolDocs, 1)
+
+		// 4. New agent (reuses the existing geminiModel).
+		var newAgentTools []tool.Tool
+		if !*noTools {
+			newAgentTools = newKubeTools.All()
+		}
+		newAgent, err := llmagent.New(llmagent.Config{
+			Name:        cfg.Agent.Name,
+			Description: "Kubernetes deployment assistant",
+			Model:       geminiModel,
+			Instruction: newSysPrompt,
+			Tools:       newAgentTools,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("creating agent: %w", err)
+		}
+
+		// 5. New session + runner.
+		newSS := session.InMemoryService()
+		newRunner, err := runner.New(runner.Config{
+			AppName:        "kasa",
+			Agent:          newAgent,
+			SessionService: newSS,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("creating runner: %w", err)
+		}
+		_, err = newSS.Create(ctx, &session.CreateRequest{
+			AppName:   "kasa",
+			UserID:    "user1",
+			SessionID: "session1",
+		})
+		if err != nil {
+			return nil, fmt.Errorf("creating session: %w", err)
+		}
+
+		// 6. Update the mutable active context.
+		activeKubeContext = resolvedCtx
+
+		return &repl.ContextSwitchResult{
+			Runner:         newRunner,
+			SessionService: newSS,
+			Manifest:       newManifest,
+			ContextName:    resolvedCtx,
+		}, nil
+	}
+
 	// Create REPL instance
-	replInstance := repl.New(r, sessionService, *debug, manifestMgr, apiKey, cfg.Agent.Model)
+	replInstance := repl.New(r, sessionService, *debug, manifestMgr, apiKey, cfg.Agent.Model, listContextsFn, switchContextFn)
 
 	// Non-interactive mode (no approval workflow - runs directly)
 	if !isInteractive {
@@ -266,6 +365,49 @@ func initKubeClient(kubeconfig, kubecontext string) (*kubernetes.Clientset, dyna
 	}
 
 	return clientset, dynamicClient, resolvedContext, nil
+}
+
+// listKubeContexts reads a kubeconfig file and returns all contexts with their
+// cluster names and which one is the current-context.
+func listKubeContexts(kubeconfig string) ([]repl.ContextInfo, string, error) {
+	loadingRules := &clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfig}
+	clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, &clientcmd.ConfigOverrides{})
+
+	rawConfig, err := clientConfig.RawConfig()
+	if err != nil {
+		return nil, "", fmt.Errorf("reading kubeconfig: %w", err)
+	}
+
+	var ctxs []repl.ContextInfo
+	for name, ctx := range rawConfig.Contexts {
+		ctxs = append(ctxs, repl.ContextInfo{
+			Name:    name,
+			Cluster: ctx.Cluster,
+			Active:  name == rawConfig.CurrentContext,
+		})
+	}
+
+	// Sort for stable display order.
+	sortContextInfos(ctxs)
+
+	return ctxs, rawConfig.CurrentContext, nil
+}
+
+// sortContextInfos sorts contexts alphabetically by name, with the active
+// context always first.
+func sortContextInfos(ctxs []repl.ContextInfo) {
+	// Simple insertion sort — context lists are small.
+	for i := 1; i < len(ctxs); i++ {
+		for j := i; j > 0; j-- {
+			if ctxs[j].Active && !ctxs[j-1].Active {
+				ctxs[j], ctxs[j-1] = ctxs[j-1], ctxs[j]
+			} else if !ctxs[j-1].Active && !ctxs[j].Active && ctxs[j].Name < ctxs[j-1].Name {
+				ctxs[j], ctxs[j-1] = ctxs[j-1], ctxs[j]
+			} else if ctxs[j-1].Active || ctxs[j].Name >= ctxs[j-1].Name {
+				break
+			}
+		}
+	}
 }
 
 // printDriftScanResults renders the drift scan results as a markdown table via glamour.

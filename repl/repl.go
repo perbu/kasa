@@ -17,6 +17,27 @@ import (
 	"google.golang.org/genai"
 )
 
+// ContextInfo describes a single kubeconfig context.
+type ContextInfo struct {
+	Name    string
+	Cluster string
+	Active  bool
+}
+
+// ContextListFunc returns all known kubeconfig contexts.
+type ContextListFunc func() ([]ContextInfo, error)
+
+// ContextSwitchResult carries the rebuilt stack after a context switch.
+type ContextSwitchResult struct {
+	Runner         *runner.Runner
+	SessionService session.Service
+	Manifest       *manifest.Manager
+	ContextName    string
+}
+
+// ContextSwitchFunc rebuilds the entire agent stack for a new context.
+type ContextSwitchFunc func(contextName string) (*ContextSwitchResult, error)
+
 // REPL manages the interactive read-eval-print loop.
 type REPL struct {
 	runner         *runner.Runner
@@ -25,10 +46,12 @@ type REPL struct {
 	manifest       *manifest.Manager
 	apiKey         string
 	modelName      string
+	listContexts   ContextListFunc
+	switchContext   ContextSwitchFunc
 }
 
 // New creates a new REPL instance.
-func New(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, modelName string) *REPL {
+func New(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, modelName string, listContexts ContextListFunc, switchContext ContextSwitchFunc) *REPL {
 	return &REPL{
 		runner:         r,
 		sessionService: ss,
@@ -36,6 +59,8 @@ func New(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Ma
 		manifest:       manifest,
 		apiKey:         apiKey,
 		modelName:      modelName,
+		listContexts:   listContexts,
+		switchContext:   switchContext,
 	}
 }
 
@@ -47,7 +72,7 @@ func (r *REPL) Run(ctx context.Context) error {
 	// late end up in stdin and get interpreted as user input by bubbletea.
 	drainStdin()
 
-	m := newModel(r.runner, r.sessionService, r.debug, r.manifest, r.apiKey, r.modelName)
+	m := newModel(r.runner, r.sessionService, r.debug, r.manifest, r.apiKey, r.modelName, r.listContexts, r.switchContext)
 	p := tea.NewProgram(m, tea.WithContext(ctx))
 	_, err := p.Run()
 	return err
@@ -130,10 +155,19 @@ func (r *REPL) PrintWelcome(version, model string, toolCount int, deploymentsDir
 	fmt.Print(RenderLogo(version))
 	fmt.Println()
 
-	// Build cluster context list — bold the active one
-	contexts := r.manifest.ListContexts()
+	// Build cluster context list from kubeconfig (via callback), falling back
+	// to the manifest directory listing if the callback is unavailable.
+	var contextDisplay string
 	activeCtx := r.manifest.Context()
-	contextDisplay := formatContextList(contexts, activeCtx)
+	if r.listContexts != nil {
+		if ctxs, err := r.listContexts(); err == nil {
+			contextDisplay = formatContextInfoList(ctxs)
+		}
+	}
+	if contextDisplay == "" {
+		contexts := r.manifest.ListContexts()
+		contextDisplay = formatContextList(contexts, activeCtx)
+	}
 
 	// Session info rendered as markdown
 	info := fmt.Sprintf(`| Setting | Value |
@@ -143,7 +177,7 @@ func (r *REPL) PrintWelcome(version, model string, toolCount int, deploymentsDir
 | Clusters | %s |
 | Deployments | %s |
 
-Commands: **/approve** **/abort** plans · **/commit** **/push** **/status** manifests · **/debug** **/dump** **/clear** · **exit**
+Commands: **/approve** **/abort** plans · **/commit** **/push** **/status** manifests · **/contexts** **/context** cluster · **/debug** **/dump** **/clear** · **exit**
 `, model, toolCount, contextDisplay, deploymentsDir)
 
 	renderer, err := setupMarkdownRenderer()
@@ -161,6 +195,23 @@ Commands: **/approve** **/abort** plans · **/commit** **/push** **/status** man
 	}
 
 	fmt.Print(rendered)
+}
+
+// formatContextInfoList formats ContextInfo entries for the welcome screen.
+// The active context is bolded; others are listed plain.
+func formatContextInfoList(ctxs []ContextInfo) string {
+	if len(ctxs) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, c := range ctxs {
+		if c.Active {
+			parts = append(parts, "**"+c.Name+"**")
+		} else {
+			parts = append(parts, c.Name)
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 // formatContextList formats cluster contexts for display.
