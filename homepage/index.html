@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kasa - Kubernetes Deployment Assistant</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⎈</text></svg>">
+</head>
+<body>
+
+<header>
+    <nav>
+        <a href="#" class="logo">kasa</a>
+        <div class="nav-links">
+            <a href="#features">Features</a>
+            <a href="#how-it-works">How It Works</a>
+            <a href="#getting-started">Get Started</a>
+            <a href="https://github.com/perbu/kasa" class="btn-nav">GitHub</a>
+        </div>
+    </nav>
+</header>
+
+<section class="hero">
+    <div class="hero-content">
+        <div class="hero-badge">Open Source &middot; Apache 2.0</div>
+        <h1>Deploy to Kubernetes<br>with <span class="gradient-text">conversation</span></h1>
+        <p class="hero-sub">Kasa is a conversational Kubernetes deployment assistant. Talk to your cluster using natural language, with a safety-first approval workflow that protects against mistakes.</p>
+        <div class="hero-actions">
+            <a href="#getting-started" class="btn btn-primary">Get Started</a>
+            <a href="https://github.com/perbu/kasa" class="btn btn-secondary">View on GitHub</a>
+        </div>
+    </div>
+    <div class="hero-terminal">
+        <div class="terminal">
+            <div class="terminal-bar">
+                <span class="dot red"></span>
+                <span class="dot yellow"></span>
+                <span class="dot green"></span>
+                <span class="terminal-title">kasa</span>
+            </div>
+            <div class="terminal-body">
+<pre><span class="t-cyan">✦</span> <span class="t-dim">·  ✧</span>   <span class="t-cyan">·</span>  <span class="t-dim">✦</span>
+<span class="t-gradient-1">██╗  ██╗ █████╗ ███████╗ █████╗</span>
+<span class="t-gradient-2">██║ ██╔╝██╔══██╗██╔════╝██╔══██╗</span>
+<span class="t-gradient-3">█████╔╝ ███████║███████╗███████║</span>
+<span class="t-gradient-4">██╔═██╗ ██╔══██║╚════██║██╔══██║</span>
+<span class="t-gradient-5">██║  ██╗██║  ██║███████║██║  ██║</span>
+<span class="t-gradient-6">╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝</span>
+<span class="t-dim">Kubernetes Deployment Assistant v0.2.0</span>
+
+<span class="t-green">❯</span> deploy nginx with 3 replicas in production
+
+<span class="t-dim">Scanning cluster...</span>
+<span class="t-cyan">ℹ</span> Creating deployment plan:
+
+<span class="t-yellow">Plan: Deploy nginx to production</span>
+  1. Create namespace "production"
+  2. Apply deployment nginx (3 replicas)
+  3. Apply service nginx (port 80)
+
+<span class="t-dim">Type /approve to execute or /abort to cancel</span>
+
+<span class="t-green">❯</span> /approve
+<span class="t-green">✓</span> Plan approved. Executing...
+<span class="t-green">✓</span> Namespace "production" created
+<span class="t-green">✓</span> Deployment "nginx" applied (3/3 ready)
+<span class="t-green">✓</span> Service "nginx" applied
+<span class="t-green">✓</span> Manifests committed to git</pre>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="features" id="features">
+    <h2>Why Kasa?</h2>
+    <p class="section-sub">Kubernetes deployments shouldn't require memorizing YAML schemas. Kasa brings the power of AI to cluster management while keeping you in control.</p>
+
+    <div class="feature-grid">
+        <div class="feature-card">
+            <div class="feature-icon">💬</div>
+            <h3>Natural Language</h3>
+            <p>Describe what you want in plain English. Kasa translates your intent into correct Kubernetes manifests and operations.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon">🛡️</div>
+            <h3>Safe by Default</h3>
+            <p>Every mutating operation requires explicit approval. Review plans before they execute. No surprises in production.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon">📁</div>
+            <h3>Git-Tracked Manifests</h3>
+            <p>All manifests are stored locally and automatically committed to git. Full audit trail and easy rollback.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon">🔍</div>
+            <h3>Cluster Awareness</h3>
+            <p>Inspects your cluster state, detects drift between manifests and live resources, and checks deployment health.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon">🧩</div>
+            <h3>CRD Support</h3>
+            <p>Works with Gateway API, cert-manager, and any Custom Resource Definition through a dynamic Kubernetes client.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon">⚡</div>
+            <h3>35+ Tools</h3>
+            <p>From listing pods to applying resources, checking logs, running dry-runs, and managing Helm releases — everything built in.</p>
+        </div>
+    </div>
+</section>
+
+<section class="how-it-works" id="how-it-works">
+    <h2>How It Works</h2>
+    <p class="section-sub">Kasa uses Google Gemini AI with an agent framework to understand your requests and interact with your Kubernetes cluster through a rich set of tools.</p>
+
+    <div class="steps">
+        <div class="step">
+            <div class="step-number">1</div>
+            <div class="step-content">
+                <h3>You describe the change</h3>
+                <p>Type a natural language request like "scale the web deployment to 5 replicas" or "deploy Redis with persistent storage".</p>
+            </div>
+        </div>
+        <div class="step">
+            <div class="step-number">2</div>
+            <div class="step-content">
+                <h3>Kasa gathers context</h3>
+                <p>The agent inspects your cluster, reads existing manifests, checks resource documentation, and builds a complete picture.</p>
+            </div>
+        </div>
+        <div class="step">
+            <div class="step-number">3</div>
+            <div class="step-content">
+                <h3>You review the plan</h3>
+                <p>Kasa proposes a plan listing every action it will take. You review it and approve with <code>/approve</code> or reject with <code>/abort</code>.</p>
+            </div>
+        </div>
+        <div class="step">
+            <div class="step-number">4</div>
+            <div class="step-content">
+                <h3>Changes are applied and tracked</h3>
+                <p>Approved actions are executed against the cluster. Manifests are saved and committed to git automatically.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="tools-section">
+    <h2>Comprehensive Tooling</h2>
+    <div class="tools-grid">
+        <div class="tool-group">
+            <h3>Read-Only</h3>
+            <ul>
+                <li>list_namespaces</li>
+                <li>list_pods</li>
+                <li>list_resources</li>
+                <li>get_resource</li>
+                <li>get_logs</li>
+                <li>get_events</li>
+                <li>check_deployment_health</li>
+                <li>dry_run_apply</li>
+                <li>get_reference</li>
+            </ul>
+        </div>
+        <div class="tool-group">
+            <h3>Mutating</h3>
+            <ul>
+                <li>apply_resource</li>
+                <li>apply_manifest</li>
+                <li>delete_resource</li>
+                <li>delete_namespace</li>
+                <li>delete_manifest</li>
+                <li>import_resource</li>
+                <li>commit_manifests</li>
+            </ul>
+        </div>
+        <div class="tool-group">
+            <h3>Management</h3>
+            <ul>
+                <li>list_manifests</li>
+                <li>read_manifest</li>
+                <li>diff_resource</li>
+                <li>propose_plan</li>
+                <li>web_search</li>
+                <li>http_check</li>
+                <li>helm_list</li>
+            </ul>
+        </div>
+    </div>
+</section>
+
+<section class="getting-started" id="getting-started">
+    <h2>Get Started</h2>
+    <div class="install-steps">
+        <div class="install-step">
+            <h3>Install</h3>
+            <div class="code-block">
+                <pre><code>go install github.com/perbu/kasa@latest</code></pre>
+            </div>
+        </div>
+        <div class="install-step">
+            <h3>Configure</h3>
+            <div class="code-block">
+                <pre><code>kasa init</code></pre>
+            </div>
+            <p>Creates <code>~/.kasa/config.yaml</code> with defaults. Add your <code>GOOGLE_API_KEY</code> to the config or set it as an environment variable.</p>
+        </div>
+        <div class="install-step">
+            <h3>Run</h3>
+            <div class="code-block">
+                <pre><code><span class="t-dim"># Interactive mode</span>
+kasa
+
+<span class="t-dim"># Single command</span>
+kasa -prompt "list all pods in default namespace"</code></pre>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="prereqs">
+    <h2>Requirements</h2>
+    <div class="req-grid">
+        <div class="req-card">
+            <strong>Go 1.25+</strong>
+            <p>For building from source</p>
+        </div>
+        <div class="req-card">
+            <strong>Kubernetes Cluster</strong>
+            <p>With a valid kubeconfig</p>
+        </div>
+        <div class="req-card">
+            <strong>Google API Key</strong>
+            <p>For Gemini AI access</p>
+        </div>
+    </div>
+</section>
+
+<footer>
+    <div class="footer-content">
+        <div class="footer-brand">
+            <span class="logo">kasa</span>
+            <p>Kubernetes Deployment Assistant</p>
+        </div>
+        <div class="footer-links">
+            <a href="https://github.com/perbu/kasa">GitHub</a>
+            <a href="https://github.com/perbu/kasa/issues">Issues</a>
+            <a href="https://github.com/perbu/kasa/blob/main/LICENSE">License</a>
+        </div>
+        <p class="footer-copy">Apache License 2.0</p>
+    </div>
+</footer>
+
+</body>
+</html>
