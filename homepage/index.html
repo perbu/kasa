@@ -25,7 +25,7 @@
     <div class="hero-content">
         <div class="hero-badge">Open Source &middot; Apache 2.0</div>
         <h1>Deploy to Kubernetes<br>with <span class="gradient-text">conversation</span></h1>
-        <p class="hero-sub">Kasa is a conversational Kubernetes deployment assistant. Talk to your cluster using natural language, with a safety-first approval workflow that protects against mistakes.</p>
+        <p class="hero-sub">Kasa is a conversational Kubernetes deployment assistant. Talk to your cluster using natural language, with an approval workflow that protects against mistakes.</p>
         <div class="hero-actions">
             <a href="#getting-started" class="btn btn-primary">Get Started</a>
             <a href="https://github.com/perbu/kasa" class="btn btn-secondary">View on GitHub</a>
@@ -78,7 +78,7 @@
         </div>
         <div class="feature-card">
             <div class="feature-icon">🛡️</div>
-            <h3>Safe by Default</h3>
+            <h3>Reasonably Safe</h3>
             <p>Every mutating operation requires explicit approval. Review plans before they execute. No surprises in production.</p>
         </div>
         <div class="feature-card">
@@ -119,8 +119,8 @@
         <div class="step">
             <div class="step-number">2</div>
             <div class="step-content">
-                <h3>Kasa gathers context</h3>
-                <p>The agent inspects your cluster, reads existing manifests, checks resource documentation, and builds a complete picture.</p>
+                <h3>Kasa gathers context and clarifies</h3>
+                <p>The agent inspects your cluster, reads existing manifests, checks resource documentation, and builds a complete picture. If anything is ambiguous, it asks clarifying questions before proceeding.</p>
             </div>
         </div>
         <div class="step">
@@ -198,7 +198,7 @@
             <div class="code-block">
                 <pre><code>kasa init</code></pre>
             </div>
-            <p>Creates <code>~/.kasa/config.yaml</code> with defaults. Add your <code>GOOGLE_API_KEY</code> to the config or set it as an environment variable.</p>
+            <p>Creates <code>~/.kasa/config.yaml</code> with defaults. Add your <code>GOOGLE_API_KEY</code> and <code>JINA_API_KEY</code> to the config or set them as environment variables.</p>
         </div>
         <div class="install-step">
             <h3>Run</h3>
@@ -227,6 +227,10 @@ kasa -prompt "list all pods in default namespace"</code></pre>
         <div class="req-card">
             <strong>Google API Key</strong>
             <p>For Gemini AI access</p>
+        </div>
+        <div class="req-card">
+            <strong>Jina API Key</strong>
+            <p>For web search and reading</p>
         </div>
     </div>
 </section>

@@ -231,8 +231,7 @@ nav {
     font-family: var(--font-mono);
     font-size: 0.8rem;
     color: var(--text-dim);
-    margin-left: auto;
-    margin-right: auto;
+    margin-left: 0.5rem;
 }
 
 .terminal-body {
@@ -459,9 +458,9 @@ section h2 {
 /* === Requirements === */
 .req-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     gap: 1.5rem;
-    max-width: 720px;
+    max-width: 900px;
     margin: 2rem auto 0;
 }
 
