@@ -220,6 +220,13 @@ nav {
 .dot.yellow { background: #FEBC2E; }
 .dot.green { background: #28C840; }
 
+.terminal-logo {
+    display: block;
+    max-width: 320px;
+    height: auto;
+    margin: 0 auto 0.25rem;
+}
+
 .terminal-title {
     font-family: var(--font-mono);
     font-size: 0.8rem;
