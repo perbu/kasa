@@ -347,6 +347,10 @@ func (m model) View() string {
 		}
 	}
 
+	// Divider line with token counts
+	sb.WriteString(m.buildDividerLine())
+	sb.WriteString("\n")
+
 	// Textarea (input area)
 	sb.WriteString(m.textarea.View())
 
@@ -1012,12 +1016,6 @@ func (m *model) buildStatusLine() string {
 		status = fmt.Sprintf("%s Thinking...", spin)
 	}
 
-	// Add token info: prompt tokens (current context window) + session total output tokens
-	if m.inputTokens > 0 || m.totalOutputTokens > 0 {
-		status = fmt.Sprintf("%s  [%s ctx, %s out]",
-			status, formatTokenCount(m.inputTokens), formatTokenCount(m.totalOutputTokens))
-	}
-
 	// Truncate to terminal width
 	if m.width > 0 {
 		status = ansi.Truncate(status, m.width-1, "...")
@@ -1026,6 +1024,23 @@ func (m *model) buildStatusLine() string {
 	return status
 }
 
+
+// buildDividerLine returns a horizontal divider with token counts right-aligned.
+func (m model) buildDividerLine() string {
+	w := m.separatorWidth()
+
+	var suffix string
+	if m.totalOutputTokens > 0 {
+		suffix = fmt.Sprintf(" %s ctx, %s out ", formatTokenCount(m.inputTokens), formatTokenCount(m.totalOutputTokens))
+	}
+
+	lineLen := w - len(suffix)
+	if lineLen < 4 {
+		lineLen = 4
+	}
+
+	return separatorStyle.Render(strings.Repeat("─", lineLen) + suffix)
+}
 
 // separatorWidth returns the width for the horizontal separator line.
 func (m model) separatorWidth() int {
