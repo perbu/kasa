@@ -13,18 +13,19 @@ import (
 
 // StatusLine manages the status display at the bottom of the terminal.
 type StatusLine struct {
-	mu            sync.Mutex
-	state         string
-	toolName      string
-	toolReason    string // reason/context for the tool call (from Args["reason"])
-	inputTokens   int32
-	outputTokens  int32
-	toolStateTime time.Time // when we entered tool state
-	spinIdx       int
-	ticker        *time.Ticker
-	done          chan struct{}
-	termWidth     int
-	isTTY         bool
+	mu                sync.Mutex
+	state             string
+	toolName          string
+	toolReason        string // reason/context for the tool call (from Args["reason"])
+	inputTokens       int32
+	outputTokens      int32
+	totalOutputTokens int32     // cumulative output tokens across the session
+	toolStateTime     time.Time // when we entered tool state
+	spinIdx           int
+	ticker            *time.Ticker
+	done              chan struct{}
+	termWidth         int
+	isTTY             bool
 }
 
 const minToolDisplayTime = 500 * time.Millisecond
@@ -104,6 +105,7 @@ func (s *StatusLine) Update(event *session.Event) {
 	if event.UsageMetadata != nil {
 		s.inputTokens = event.UsageMetadata.PromptTokenCount
 		s.outputTokens = event.UsageMetadata.CandidatesTokenCount
+		s.totalOutputTokens += event.UsageMetadata.CandidatesTokenCount
 	}
 
 	// Check for function calls in the content
@@ -212,9 +214,10 @@ func (s *StatusLine) render() {
 		status = ""
 	}
 
-	// Add token info if available
-	if s.inputTokens > 0 || s.outputTokens > 0 {
-		status = fmt.Sprintf("%s  [↑%d ↓%d]", status, s.inputTokens, s.outputTokens)
+	// Add token info: prompt tokens (current context window) + session total output tokens
+	if s.inputTokens > 0 || s.totalOutputTokens > 0 {
+		status = fmt.Sprintf("%s  [%s ctx, %s out]",
+			status, formatTokenCount(s.inputTokens), formatTokenCount(s.totalOutputTokens))
 	}
 
 	// Pad and truncate to terminal width
@@ -233,4 +236,16 @@ func (s *StatusLine) clear() {
 	}
 	// Clear the line with spaces and return cursor to start
 	fmt.Fprintf(os.Stderr, "\r%s\r", strings.Repeat(" ", s.termWidth-1))
+}
+
+// formatTokenCount formats a token count for display (e.g., 1234 → "1.2k", 1234567 → "1.2M").
+func formatTokenCount(count int32) string {
+	switch {
+	case count >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(count)/1_000_000)
+	case count >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(count)/1_000)
+	default:
+		return fmt.Sprintf("%d", count)
+	}
 }

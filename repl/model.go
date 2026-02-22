@@ -63,11 +63,12 @@ type model struct {
 	eventCh     chan agentEventMsg
 
 	// status display
-	statusText   string
-	toolName     string
-	toolReason   string
-	inputTokens  int32
-	outputTokens int32
+	statusText        string
+	toolName          string
+	toolReason        string
+	inputTokens       int32
+	outputTokens      int32
+	totalOutputTokens int32 // cumulative output tokens across the session
 
 	// terminal dimensions
 	width  int
@@ -113,7 +114,7 @@ func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manife
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0
 	ta.SetHeight(5)
-	ta.MaxHeight = 5
+	ta.MaxHeight = 20
 
 	// Clear background colors so the textarea blends with the terminal.
 	ta.FocusedStyle.Base = lipgloss.NewStyle()
@@ -1010,9 +1011,10 @@ func (m *model) buildStatusLine() string {
 		status = fmt.Sprintf("%s Thinking...", spin)
 	}
 
-	// Add token info
-	if m.inputTokens > 0 || m.outputTokens > 0 {
-		status = fmt.Sprintf("%s  [%d↑ %d↓]", status, m.inputTokens, m.outputTokens)
+	// Add token info: prompt tokens (current context window) + session total output tokens
+	if m.inputTokens > 0 || m.totalOutputTokens > 0 {
+		status = fmt.Sprintf("%s  [%s ctx, %s out]",
+			status, formatTokenCount(m.inputTokens), formatTokenCount(m.totalOutputTokens))
 	}
 
 	// Truncate to terminal width
