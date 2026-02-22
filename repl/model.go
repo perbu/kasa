@@ -58,9 +58,10 @@ type model struct {
 	modelName string
 
 	// agent execution state
-	agentBusy   bool
-	agentCancel context.CancelFunc
-	eventCh     chan agentEventMsg
+	agentBusy     bool
+	agentCancel   context.CancelFunc
+	eventCh       chan agentEventMsg
+	toolCallCount int // number of tool calls in current agent turn
 
 	// status display
 	statusText        string
@@ -68,6 +69,7 @@ type model struct {
 	toolReason        string
 	inputTokens       int32
 	outputTokens      int32
+	totalInputTokens  int32 // cumulative input tokens across the session
 	totalOutputTokens int32 // cumulative output tokens across the session
 
 	// terminal dimensions
@@ -90,6 +92,10 @@ type model struct {
 	quitting bool
 }
 
+// maxToolCallsPerTurn is the hard limit on tool calls in a single agent turn.
+// If the model exceeds this, the agent is cancelled to prevent infinite loops.
+const maxToolCallsPerTurn = 25
+
 // statusStyle is the dim style for the status line.
 var statusStyle = lipgloss.NewStyle().Faint(true)
 
@@ -101,6 +107,9 @@ var uncommittedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Faint
 
 // debugStyle is the dim gray style for debug output lines.
 var debugStyle = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("8"))
+
+// toolCallStyle is the dim style for persistent tool call log lines.
+var toolCallStyle = lipgloss.NewStyle().Faint(true)
 
 func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, modelName string, listContexts ContextListFunc, switchContext ContextSwitchFunc) model {
 	ta := textarea.New()
@@ -536,6 +545,7 @@ func (m *model) startAgent(prompt string) tea.Cmd {
 	m.statusText = "Thinking..."
 	m.toolName = ""
 	m.toolReason = ""
+	m.toolCallCount = 0
 	m.inputTokens = 0
 	m.outputTokens = 0
 	m.textarea.Blur()
@@ -636,6 +646,7 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 	if event.UsageMetadata != nil {
 		m.inputTokens = event.UsageMetadata.PromptTokenCount
 		m.outputTokens = event.UsageMetadata.CandidatesTokenCount
+		m.totalInputTokens += event.UsageMetadata.PromptTokenCount
 		m.totalOutputTokens += event.UsageMetadata.CandidatesTokenCount
 	}
 
@@ -661,10 +672,25 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 
 		// Update status based on the last tool call / response in this event
 		for _, tc := range ev.ToolCalls {
+			m.toolCallCount++
 			m.toolName = tc.Name
 			m.toolReason = truncateReason(tc.Reason)
 			m.statusText = ""
+
+			if line := formatToolCallLine(tc); line != "" {
+				cmds = append(cmds, tea.Println(line))
+			}
 		}
+
+		// Hard limit: cancel agent if it's making too many tool calls
+		if m.toolCallCount >= maxToolCallsPerTurn && m.agentCancel != nil {
+			m.agentCancel()
+			cmds = append(cmds, tea.Println(
+				"\n⚠ Agent stopped: exceeded tool call limit ("+
+					fmt.Sprintf("%d", maxToolCallsPerTurn)+
+					" calls). The model may be stuck in a loop."))
+		}
+
 		if len(ev.ToolResponses) > 0 {
 			m.toolName = ""
 			m.toolReason = ""
@@ -1025,21 +1051,77 @@ func (m *model) buildStatusLine() string {
 }
 
 
-// buildDividerLine returns a horizontal divider with token counts right-aligned.
+// divider styles
+var (
+	dividerLineStyle = lipgloss.NewStyle().Faint(true)
+	safeStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("2")) // green
+	executingStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("3")) // yellow
+	planPendingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3")) // yellow
+	noPlanStyle      = lipgloss.NewStyle().Faint(true)
+	tokenStyle       = lipgloss.NewStyle().Faint(true)
+)
+
+// buildDividerLine returns a horizontal divider with status right-aligned.
 func (m model) buildDividerLine() string {
 	w := m.separatorWidth()
 
-	var suffix string
-	if m.totalOutputTokens > 0 {
-		suffix = fmt.Sprintf(" %s ctx, %s out ", formatTokenCount(m.inputTokens), formatTokenCount(m.totalOutputTokens))
+	// Build status segments with color
+	var modeStr string
+	if m.state.Mode == ModeExecuting {
+		modeStr = executingStyle.Render("EXECUTING")
+	} else {
+		modeStr = safeStyle.Render("SAFE")
 	}
 
-	lineLen := w - len(suffix)
-	if lineLen < 4 {
-		lineLen = 4
+	var planStr string
+	if m.state.HasPendingPlan() {
+		planStr = planPendingStyle.Render("plan pending")
+	} else {
+		planStr = noPlanStyle.Render("no plan")
 	}
 
-	return separatorStyle.Render(strings.Repeat("─", lineLen) + suffix)
+	var tokenStr string
+	var tokenPlain string
+	if m.totalInputTokens > 0 {
+		tokenPlain = fmt.Sprintf("%s in, %s out",
+			formatTokenCount(m.totalInputTokens), formatTokenCount(m.totalOutputTokens))
+		tokenStr = tokenStyle.Render(tokenPlain)
+	}
+
+	// Assemble the right-side label (plain text length for padding calculation)
+	var parts []string
+	var plainLen int
+
+	parts = append(parts, modeStr)
+	if m.state.Mode == ModeExecuting {
+		plainLen += len("EXECUTING")
+	} else {
+		plainLen += len("SAFE")
+	}
+
+	parts = append(parts, planStr)
+	if m.state.HasPendingPlan() {
+		plainLen += len("plan pending")
+	} else {
+		plainLen += len("no plan")
+	}
+
+	if tokenStr != "" {
+		parts = append(parts, tokenStr)
+		plainLen += len(tokenPlain)
+	}
+
+	sep := dividerLineStyle.Render(" | ")
+	sepPlain := 3 // " | "
+	label := strings.Join(parts, sep)
+	labelPlainLen := plainLen + sepPlain*(len(parts)-1) + 2 // +2 for surrounding spaces
+
+	lineLen := w - labelPlainLen
+	if lineLen < 2 {
+		lineLen = 2
+	}
+
+	return dividerLineStyle.Render(strings.Repeat("─", lineLen)+" ") + label + dividerLineStyle.Render(" ")
 }
 
 // separatorWidth returns the width for the horizontal separator line.
@@ -1098,6 +1180,19 @@ func formatDebugLines(event *session.Event) []string {
 	}
 
 	return lines
+}
+
+// formatToolCallLine returns a styled one-liner for a tool call, or "" if
+// the tool has its own dedicated rendering (plan, clarification).
+func formatToolCallLine(tc ToolCallInfo) string {
+	switch tc.Name {
+	case "propose_plan", "ask_clarification":
+		return ""
+	}
+	if tc.Reason != "" {
+		return toolCallStyle.Render(fmt.Sprintf("  ⎿ %s (%s)", tc.Name, truncateReason(tc.Reason)))
+	}
+	return toolCallStyle.Render(fmt.Sprintf("  ⎿ %s", tc.Name))
 }
 
 // truncateReason truncates a reason string to a display-friendly length.

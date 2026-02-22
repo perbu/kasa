@@ -19,6 +19,7 @@ type StatusLine struct {
 	toolReason        string // reason/context for the tool call (from Args["reason"])
 	inputTokens       int32
 	outputTokens      int32
+	totalInputTokens  int32     // cumulative input tokens across the session
 	totalOutputTokens int32     // cumulative output tokens across the session
 	toolStateTime     time.Time // when we entered tool state
 	spinIdx           int
@@ -105,6 +106,7 @@ func (s *StatusLine) Update(event *session.Event) {
 	if event.UsageMetadata != nil {
 		s.inputTokens = event.UsageMetadata.PromptTokenCount
 		s.outputTokens = event.UsageMetadata.CandidatesTokenCount
+		s.totalInputTokens += event.UsageMetadata.PromptTokenCount
 		s.totalOutputTokens += event.UsageMetadata.CandidatesTokenCount
 	}
 
@@ -214,10 +216,10 @@ func (s *StatusLine) render() {
 		status = ""
 	}
 
-	// Add token info: prompt tokens (current context window) + session total output tokens
-	if s.inputTokens > 0 || s.totalOutputTokens > 0 {
-		status = fmt.Sprintf("%s  [%s ctx, %s out]",
-			status, formatTokenCount(s.inputTokens), formatTokenCount(s.totalOutputTokens))
+	// Add cumulative token totals
+	if s.totalInputTokens > 0 {
+		status = fmt.Sprintf("%s  [%s in, %s out]",
+			status, formatTokenCount(s.totalInputTokens), formatTokenCount(s.totalOutputTokens))
 	}
 
 	// Pad and truncate to terminal width
