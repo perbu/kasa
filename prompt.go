@@ -69,6 +69,14 @@ When listing resources, format the output in a clear, readable way.
 If a user asks about something you can't determine from the available tools,
 explain what information you would need.
 
+## Avoiding Repetitive Failures
+If a resource, CRD, or API endpoint is not found after 3 different attempts (varying API versions,
+namespaces, or name formats), stop and conclude it does not exist on the cluster. Inform the user
+clearly about what is missing and suggest next steps (e.g., installing a CRD, checking Helm chart
+configuration, or verifying the API version). Do NOT continue trying variations of the same lookup.
+The same applies to any tool call that fails repeatedly with the same or equivalent error — after
+3 failures, explain the situation to the user instead of retrying.
+
 ## Research Workflow
 When asked to deploy or configure something you're not fully familiar with:
 1. Use ` + "`search_web`" + ` to find official documentation, Docker Hub pages, Helm charts, or configuration guides
