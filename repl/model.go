@@ -3,6 +3,7 @@ package repl
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -571,12 +572,20 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	if msg.err != nil {
-		m.agentBusy = false
-		m.agentCancel = nil
-		m.state.PendingClarification = nil // clear stale clarification from partial run
-		cmds = append(cmds, m.textarea.Focus())
+		// When we cancel the agent context (e.g. after detecting a plan or
+		// clarification), the runner returns context.Canceled. Treat this
+		// as a normal completion so we don't show a spurious error.
+		if errors.Is(msg.err, context.Canceled) {
+			// Fall through to the done-handling path below.
+			msg = agentEventMsg{done: true}
+		} else {
+			m.agentBusy = false
+			m.agentCancel = nil
+			m.state.PendingClarification = nil // clear stale clarification from partial run
+			cmds = append(cmds, m.textarea.Focus())
 			cmds = append(cmds, tea.Println(fmt.Sprintf("Error: %v", msg.err)))
-		return m, tea.Batch(cmds...)
+			return m, tea.Batch(cmds...)
+		}
 	}
 
 	if msg.done {
@@ -630,9 +639,18 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 
 		if ev.Plan != nil {
 			m.state.SetPendingPlan(ev.Plan)
+			// Cancel the agent to prevent the model from continuing
+			// past the plan proposal. Without this, the model may
+			// hallucinate user approval and execute mutating tools.
+			if m.agentCancel != nil {
+				m.agentCancel()
+			}
 		}
 		if ev.Clarification != nil {
 			m.state.PendingClarification = ev.Clarification
+			if m.agentCancel != nil {
+				m.agentCancel()
+			}
 		}
 
 		// Update status based on the last tool call / response in this event
