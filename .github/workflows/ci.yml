@@ -16,6 +16,11 @@ jobs:
         with:
           go-version: "1.25"
 
+      - name: Install envtest binaries
+        run: |
+          go tool setup-envtest use
+          echo "KUBEBUILDER_ASSETS=$(go tool setup-envtest use -p path)" >> "$GITHUB_ENV"
+
       - name: Run tests with coverage
         run: go test -coverprofile=coverage.txt ./...
 
