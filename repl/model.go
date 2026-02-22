@@ -632,6 +632,7 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 	if event.UsageMetadata != nil {
 		m.inputTokens = event.UsageMetadata.PromptTokenCount
 		m.outputTokens = event.UsageMetadata.CandidatesTokenCount
+		m.totalOutputTokens += event.UsageMetadata.CandidatesTokenCount
 	}
 
 	// Process content parts
