@@ -38,21 +38,32 @@ type KubeTools struct {
 	dynamicClient dynamic.Interface
 	manifest      *manifest.Manager
 	jinaAPIKey    string
+	counter       *ToolCallCounter
 }
 
 // NewKubeTools creates a new KubeTools instance with the given clientset, dynamic client, manifest manager, and Jina API key.
-func NewKubeTools(clientset *kubernetes.Clientset, dynamicClient dynamic.Interface, manifest *manifest.Manager, jinaAPIKey string) *KubeTools {
+// The warnThreshold controls how many calls to the same tool before a warning is
+// injected into the response. Pass 0 to disable per-tool warnings.
+func NewKubeTools(clientset *kubernetes.Clientset, dynamicClient dynamic.Interface, manifest *manifest.Manager, jinaAPIKey string, warnThreshold int) *KubeTools {
 	return &KubeTools{
 		clientset:     clientset,
 		dynamicClient: dynamicClient,
 		manifest:      manifest,
 		jinaAPIKey:    jinaAPIKey,
+		counter:       NewToolCallCounter(warnThreshold),
 	}
 }
 
+// Counter returns the shared tool call counter so the REPL can reset it between turns.
+func (k *KubeTools) Counter() *ToolCallCounter {
+	return k.counter
+}
+
 // All returns all available Kubernetes tools implementing tool.Tool interface.
+// Each tool is wrapped with an invocation counter that injects a warning into
+// the response when a single tool is called too many times in one turn.
 func (k *KubeTools) All() []tool.Tool {
-	return []tool.Tool{
+	raw := []tool.Tool{
 		NewListNamespacesTool(k.clientset),
 		NewDeleteNamespaceTool(k.clientset, k.manifest),
 		NewListPodsTool(k.clientset),
@@ -89,6 +100,16 @@ func (k *KubeTools) All() []tool.Tool {
 		NewGetHelmReleaseTool(k.clientset),
 		NewGetHelmValuesTool(k.clientset),
 	}
+
+	wrapped := make([]tool.Tool, len(raw))
+	for i, t := range raw {
+		if rt, ok := t.(runnableTool); ok {
+			wrapped[i] = &countingTool{inner: rt, counter: k.counter}
+		} else {
+			wrapped[i] = t // shouldn't happen, but don't break
+		}
+	}
+	return wrapped
 }
 
 // ReadOnlyTools returns tools that only read data and have no side effects.

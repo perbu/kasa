@@ -81,7 +81,7 @@ func main() {
 	jinaAPIKey := cfg.JinaAPIKey()
 
 	// Initialize tools
-	kubeTools := tools.NewKubeTools(clientset, dynamicClient, manifestMgr, jinaAPIKey)
+	kubeTools := tools.NewKubeTools(clientset, dynamicClient, manifestMgr, jinaAPIKey, cfg.Agent.ToolWarnThreshold)
 
 	// Get Google API key
 	apiKey := cfg.GoogleAPIKey()
@@ -218,7 +218,7 @@ func main() {
 
 		// 3. New tools.
 		newJinaKey := cfg.JinaAPIKey()
-		newKubeTools := tools.NewKubeTools(newClientset, newDynamic, newManifest, newJinaKey)
+		newKubeTools := tools.NewKubeTools(newClientset, newDynamic, newManifest, newJinaKey, cfg.Agent.ToolWarnThreshold)
 		newToolDocs := newKubeTools.GenerateToolDocs()
 		newSysPrompt := strings.Replace(cfg.Prompts.System, "{{TOOL_DOCS}}", newToolDocs, 1)
 
@@ -269,7 +269,7 @@ func main() {
 	}
 
 	// Create REPL instance
-	replInstance := repl.New(r, sessionService, *debug, manifestMgr, apiKey, cfg.Agent.Model, listContextsFn, switchContextFn)
+	replInstance := repl.New(r, sessionService, *debug, manifestMgr, apiKey, cfg.Agent.Model, cfg.Agent.MaxToolCalls, kubeTools.Counter(), listContextsFn, switchContextFn)
 
 	// Non-interactive mode (no approval workflow - runs directly)
 	if !isInteractive {

@@ -16,8 +16,10 @@ type Config struct {
 		Context    string `yaml:"context"`
 	} `yaml:"kubernetes"`
 	Agent struct {
-		Model string `yaml:"model"`
-		Name  string `yaml:"name"`
+		Model             string `yaml:"model"`
+		Name              string `yaml:"name"`
+		MaxToolCalls      int    `yaml:"max_tool_calls"`
+		ToolWarnThreshold int    `yaml:"tool_warn_threshold"`
 	} `yaml:"agent"`
 	Deployments struct {
 		Directory string `yaml:"directory"`
@@ -82,6 +84,12 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Agent.Name == "" {
 		cfg.Agent.Name = "kasa"
+	}
+	if cfg.Agent.MaxToolCalls == 0 {
+		cfg.Agent.MaxToolCalls = 25
+	}
+	if cfg.Agent.ToolWarnThreshold == 0 {
+		cfg.Agent.ToolWarnThreshold = 3
 	}
 	if cfg.Deployments.Directory == "" {
 		cfg.Deployments.Directory = "~/.kasa/deployments"

@@ -38,29 +38,39 @@ type ContextSwitchResult struct {
 // ContextSwitchFunc rebuilds the entire agent stack for a new context.
 type ContextSwitchFunc func(contextName string) (*ContextSwitchResult, error)
 
+// ToolCallResetter is implemented by objects that track tool call counts
+// and need to be reset between agent turns.
+type ToolCallResetter interface {
+	Reset()
+}
+
 // REPL manages the interactive read-eval-print loop.
 type REPL struct {
-	runner         *runner.Runner
-	sessionService session.Service
-	debug          bool
-	manifest       *manifest.Manager
-	apiKey         string
-	modelName      string
-	listContexts   ContextListFunc
-	switchContext   ContextSwitchFunc
+	runner           *runner.Runner
+	sessionService   session.Service
+	debug            bool
+	manifest         *manifest.Manager
+	apiKey           string
+	modelName        string
+	maxToolCalls     int
+	toolCallResetter ToolCallResetter
+	listContexts     ContextListFunc
+	switchContext     ContextSwitchFunc
 }
 
 // New creates a new REPL instance.
-func New(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, modelName string, listContexts ContextListFunc, switchContext ContextSwitchFunc) *REPL {
+func New(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, listContexts ContextListFunc, switchContext ContextSwitchFunc) *REPL {
 	return &REPL{
-		runner:         r,
-		sessionService: ss,
-		debug:          debug,
-		manifest:       manifest,
-		apiKey:         apiKey,
-		modelName:      modelName,
-		listContexts:   listContexts,
-		switchContext:   switchContext,
+		runner:           r,
+		sessionService:   ss,
+		debug:            debug,
+		manifest:         manifest,
+		apiKey:           apiKey,
+		modelName:        modelName,
+		maxToolCalls:     maxToolCalls,
+		toolCallResetter: toolCallResetter,
+		listContexts:     listContexts,
+		switchContext:     switchContext,
 	}
 }
 
@@ -72,7 +82,7 @@ func (r *REPL) Run(ctx context.Context) error {
 	// late end up in stdin and get interpreted as user input by bubbletea.
 	drainStdin()
 
-	m := newModel(r.runner, r.sessionService, r.debug, r.manifest, r.apiKey, r.modelName, r.listContexts, r.switchContext)
+	m := newModel(r.runner, r.sessionService, r.debug, r.manifest, r.apiKey, r.modelName, r.maxToolCalls, r.toolCallResetter, r.listContexts, r.switchContext)
 	p := tea.NewProgram(m, tea.WithContext(ctx))
 	_, err := p.Run()
 	return err

@@ -58,10 +58,12 @@ type model struct {
 	modelName string
 
 	// agent execution state
-	agentBusy     bool
-	agentCancel   context.CancelFunc
-	eventCh       chan agentEventMsg
-	toolCallCount int // number of tool calls in current agent turn
+	agentBusy        bool
+	agentCancel      context.CancelFunc
+	eventCh          chan agentEventMsg
+	toolCallCount    int              // number of tool calls in current agent turn
+	maxToolCalls     int              // configurable limit per turn
+	toolCallResetter ToolCallResetter // reset per-tool counters between turns
 
 	// status display
 	statusText        string
@@ -92,10 +94,6 @@ type model struct {
 	quitting bool
 }
 
-// maxToolCallsPerTurn is the hard limit on tool calls in a single agent turn.
-// If the model exceeds this, the agent is cancelled to prevent infinite loops.
-const maxToolCallsPerTurn = 25
-
 // statusStyle is the dim style for the status line.
 var statusStyle = lipgloss.NewStyle().Faint(true)
 
@@ -111,7 +109,7 @@ var debugStyle = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("8"))
 // toolCallStyle is the dim style for persistent tool call log lines.
 var toolCallStyle = lipgloss.NewStyle().Faint(true)
 
-func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, modelName string, listContexts ContextListFunc, switchContext ContextSwitchFunc) model {
+func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, listContexts ContextListFunc, switchContext ContextSwitchFunc) model {
 	ta := textarea.New()
 	ta.Placeholder = "Type a message..."
 	ta.SetPromptFunc(2, func(line int) string {
@@ -166,8 +164,10 @@ func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manife
 		mdRenderer:     md,
 		manifest:       manifest,
 		apiKey:         apiKey,
-		modelName:      modelName,
-		eventCh:        make(chan agentEventMsg, 64),
+		modelName:        modelName,
+		maxToolCalls:     maxToolCalls,
+		toolCallResetter: toolCallResetter,
+		eventCh:          make(chan agentEventMsg, 64),
 		listContexts:   listContexts,
 		switchContext:   switchContext,
 	}
@@ -546,6 +546,9 @@ func (m *model) startAgent(prompt string) tea.Cmd {
 	m.toolName = ""
 	m.toolReason = ""
 	m.toolCallCount = 0
+	if m.toolCallResetter != nil {
+		m.toolCallResetter.Reset()
+	}
 	m.inputTokens = 0
 	m.outputTokens = 0
 	m.textarea.Blur()
@@ -683,11 +686,11 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 		}
 
 		// Hard limit: cancel agent if it's making too many tool calls
-		if m.toolCallCount >= maxToolCallsPerTurn && m.agentCancel != nil {
+		if m.maxToolCalls > 0 && m.toolCallCount >= m.maxToolCalls && m.agentCancel != nil {
 			m.agentCancel()
 			cmds = append(cmds, tea.Println(
 				"\n⚠ Agent stopped: exceeded tool call limit ("+
-					fmt.Sprintf("%d", maxToolCallsPerTurn)+
+					fmt.Sprintf("%d", m.maxToolCalls)+
 					" calls). The model may be stuck in a loop."))
 		}
 

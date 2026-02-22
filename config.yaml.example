@@ -14,6 +14,10 @@ agent:
   model: gemini-3-flash-preview
   # Agent name (default: kasa)
   name: kasa
+  # Maximum tool calls per turn before the agent is stopped (default: 25, 0 = unlimited)
+  max_tool_calls: 25
+  # Warn the model after this many calls to the same tool in one turn (default: 3, 0 = disabled)
+  tool_warn_threshold: 3
 
 deployments:
   # Directory where manifests are stored (supports ~ for home directory)

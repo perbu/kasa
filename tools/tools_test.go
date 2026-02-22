@@ -1093,7 +1093,7 @@ func TestGetLogsTool(t *testing.T) {
 // TestKubeToolsAll tests that All() returns a sane, unique registry and includes required baseline tools.
 func TestKubeToolsAll(t *testing.T) {
 	mgr := newTestManifestManager(t)
-	kt := NewKubeTools(clientset, dynamicClient, mgr, "")
+	kt := NewKubeTools(clientset, dynamicClient, mgr, "", 3)
 
 	tools := kt.All()
 	if len(tools) == 0 {
