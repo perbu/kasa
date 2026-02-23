@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -677,10 +678,10 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 		for _, tc := range ev.ToolCalls {
 			m.toolCallCount++
 			m.toolName = tc.Name
-			m.toolReason = truncateReason(tc.Reason)
+			m.toolReason = tc.Reason
 			m.statusText = ""
 
-			if line := formatToolCallLine(tc); line != "" {
+			if line := formatToolCallLine(tc, m.width); line != "" {
 				cmds = append(cmds, tea.Println(line))
 			}
 		}
@@ -1187,25 +1188,65 @@ func formatDebugLines(event *session.Event) []string {
 
 // formatToolCallLine returns a styled one-liner for a tool call, or "" if
 // the tool has its own dedicated rendering (plan, clarification).
-func formatToolCallLine(tc ToolCallInfo) string {
+// width is the terminal width used for truncation (0 means no truncation).
+func formatToolCallLine(tc ToolCallInfo, width int) string {
 	switch tc.Name {
 	case "propose_plan", "ask_clarification":
 		return ""
 	}
-	if tc.Reason != "" {
-		return toolCallStyle.Render(fmt.Sprintf("  ⎿ %s (%s)", tc.Name, truncateReason(tc.Reason)))
+
+	argStr := formatToolArgs(tc.Args)
+	var line string
+	if argStr != "" {
+		line = fmt.Sprintf("  ⎿ %s (%s)", tc.Name, argStr)
+	} else {
+		line = fmt.Sprintf("  ⎿ %s", tc.Name)
 	}
-	return toolCallStyle.Render(fmt.Sprintf("  ⎿ %s", tc.Name))
+
+	if width > 0 {
+		line = ansi.Truncate(line, width-1, "…")
+	}
+
+	return toolCallStyle.Render(line)
 }
 
-// truncateReason truncates a reason string to a display-friendly length.
-func truncateReason(reason string) string {
-	if reason == "" {
+// formatToolArgs formats tool call arguments as a compact key=value string.
+// The "reason" key is placed last since it's the descriptive summary.
+func formatToolArgs(args map[string]any) string {
+	if len(args) == 0 {
 		return ""
 	}
-	maxLen := 50
-	if len(reason) > maxLen {
-		return reason[:maxLen-3] + "..."
+
+	// Collect keys sorted alphabetically, with "reason" last.
+	keys := make([]string, 0, len(args))
+	hasReason := false
+	for k := range args {
+		if k == "reason" {
+			hasReason = true
+			continue
+		}
+		keys = append(keys, k)
 	}
-	return reason
+	sort.Strings(keys)
+	if hasReason {
+		keys = append(keys, "reason")
+	}
+
+	var parts []string
+	for _, k := range keys {
+		v := fmt.Sprintf("%v", args[k])
+		if v == "" {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s=%s", k, v))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// truncateToWidth truncates a string to fit within the given terminal width.
+func truncateToWidth(s string, width int) string {
+	if width <= 0 || s == "" {
+		return s
+	}
+	return ansi.Truncate(s, width-1, "…")
 }

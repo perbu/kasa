@@ -158,6 +158,7 @@ func (s *StatusLine) waitForToolDisplay() {
 }
 
 // extractReasonFromArgs extracts the "reason" field from tool call arguments.
+// No truncation here — render() truncates the full line to terminal width.
 func (s *StatusLine) extractReasonFromArgs(args map[string]any) string {
 	if args == nil {
 		return ""
@@ -166,12 +167,6 @@ func (s *StatusLine) extractReasonFromArgs(args map[string]any) string {
 	reason, ok := args["reason"].(string)
 	if !ok || reason == "" {
 		return ""
-	}
-
-	// Truncate to reasonable length for display
-	maxLen := 50
-	if len(reason) > maxLen {
-		reason = reason[:maxLen-3] + "..."
 	}
 
 	return reason

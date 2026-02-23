@@ -71,9 +71,18 @@ func (ct *countingTool) Name() string       { return ct.inner.Name() }
 func (ct *countingTool) Description() string { return ct.inner.Description() }
 func (ct *countingTool) IsLongRunning() bool { return ct.inner.IsLongRunning() }
 
-// ADK toolinternal.RequestProcessor interface (duck-typed)
+// ADK toolinternal.RequestProcessor interface (duck-typed).
+// We delegate to the inner tool to register the declaration, then overwrite
+// the req.Tools entry so ADK dispatches Run() on us (the wrapper) instead
+// of the unwrapped inner tool.
 func (ct *countingTool) ProcessRequest(ctx tool.Context, req *model.LLMRequest) error {
-	return ct.inner.ProcessRequest(ctx, req)
+	if err := ct.inner.ProcessRequest(ctx, req); err != nil {
+		return err
+	}
+	if req.Tools != nil {
+		req.Tools[ct.inner.Name()] = ct
+	}
+	return nil
 }
 
 // ADK toolinternal.FunctionTool interface (duck-typed)

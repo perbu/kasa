@@ -6,6 +6,7 @@ import "google.golang.org/genai"
 type ToolCallInfo struct {
 	Name   string
 	Reason string
+	Args   map[string]any
 }
 
 // EventResult holds the extracted information from processing event content parts.
@@ -40,6 +41,7 @@ func ProcessEventParts(parts []*genai.Part) *EventResult {
 			result.ToolCalls = append(result.ToolCalls, ToolCallInfo{
 				Name:   part.FunctionCall.Name,
 				Reason: extractToolReason(part.FunctionCall.Args),
+				Args:   part.FunctionCall.Args,
 			})
 		}
 
