@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/perbu/kasa/manifest"
+	openai "github.com/sashabaranov/go-openai"
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
@@ -56,6 +57,7 @@ type model struct {
 	// manifest management
 	manifest  *manifest.Manager
 	apiKey    string
+	baseURL   string
 	modelName string
 
 	// agent execution state
@@ -110,7 +112,7 @@ var debugStyle = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("8"))
 // toolCallStyle is the dim style for persistent tool call log lines.
 var toolCallStyle = lipgloss.NewStyle().Faint(true)
 
-func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, listContexts ContextListFunc, switchContext ContextSwitchFunc) model {
+func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, listContexts ContextListFunc, switchContext ContextSwitchFunc) model {
 	ta := textarea.New()
 	ta.Placeholder = "Type a message..."
 	ta.SetPromptFunc(2, func(line int) string {
@@ -165,6 +167,7 @@ func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manife
 		mdRenderer:     md,
 		manifest:       manifest,
 		apiKey:         apiKey,
+		baseURL:        baseURL,
 		modelName:        modelName,
 		maxToolCalls:     maxToolCalls,
 		toolCallResetter: toolCallResetter,
@@ -913,18 +916,14 @@ func (m model) handleStatus(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// generateCommitMessage makes a one-shot Gemini call to generate a commit message from a diff
+// generateCommitMessage makes a one-shot LLM call to generate a commit message from a diff
 // and conversation context. Returns a conventional commit message with subject and body.
 func (m *model) generateCommitMessage(diff, conversationContext string) (string, error) {
 	ctx := context.Background()
 
-	client, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey:  m.apiKey,
-		Backend: genai.BackendGeminiAPI,
-	})
-	if err != nil {
-		return "", fmt.Errorf("creating genai client: %w", err)
-	}
+	cfg := openai.DefaultConfig(m.apiKey)
+	cfg.BaseURL = m.baseURL
+	client := openai.NewClientWithConfig(cfg)
 
 	// Truncate very large diffs to avoid excessive token usage
 	const maxDiffLen = 8000
@@ -953,26 +952,23 @@ Diff:
 Format: A subject line (imperative mood, max 72 chars), then a blank line, then a brief body describing what changed. Do not use markdown formatting. Output the commit message only, nothing else.`, truncated)
 	}
 
-	resp, err := client.Models.GenerateContent(ctx, m.modelName, []*genai.Content{genai.NewContentFromText(prompt, genai.RoleUser)}, nil)
+	resp, err := client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
+		Model: m.modelName,
+		Messages: []openai.ChatCompletionMessage{
+			{Role: openai.ChatMessageRoleUser, Content: prompt},
+		},
+	})
 	if err != nil {
 		return "", fmt.Errorf("generating commit message: %w", err)
 	}
 
-	if resp == nil || len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil {
+	if len(resp.Choices) == 0 {
 		return "", fmt.Errorf("empty response from model")
 	}
 
-	// Extract text from response
-	for _, part := range resp.Candidates[0].Content.Parts {
-		if part.Text != "" {
-			msg := strings.TrimSpace(part.Text)
-			// Remove any markdown formatting the model might add
-			msg = strings.Trim(msg, "`\"")
-			return msg, nil
-		}
-	}
-
-	return "", fmt.Errorf("no text in model response")
+	msg := strings.TrimSpace(resp.Choices[0].Message.Content)
+	msg = strings.Trim(msg, "`\"")
+	return msg, nil
 }
 
 // extractConversationSummary pulls user messages and agent text from the ADK session

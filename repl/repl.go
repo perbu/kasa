@@ -51,6 +51,7 @@ type REPL struct {
 	debug            bool
 	manifest         *manifest.Manager
 	apiKey           string
+	baseURL          string
 	modelName        string
 	maxToolCalls     int
 	toolCallResetter ToolCallResetter
@@ -59,13 +60,14 @@ type REPL struct {
 }
 
 // New creates a new REPL instance.
-func New(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, listContexts ContextListFunc, switchContext ContextSwitchFunc) *REPL {
+func New(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, listContexts ContextListFunc, switchContext ContextSwitchFunc) *REPL {
 	return &REPL{
 		runner:           r,
 		sessionService:   ss,
 		debug:            debug,
 		manifest:         manifest,
 		apiKey:           apiKey,
+		baseURL:          baseURL,
 		modelName:        modelName,
 		maxToolCalls:     maxToolCalls,
 		toolCallResetter: toolCallResetter,
@@ -82,7 +84,7 @@ func (r *REPL) Run(ctx context.Context) error {
 	// late end up in stdin and get interpreted as user input by bubbletea.
 	drainStdin()
 
-	m := newModel(r.runner, r.sessionService, r.debug, r.manifest, r.apiKey, r.modelName, r.maxToolCalls, r.toolCallResetter, r.listContexts, r.switchContext)
+	m := newModel(r.runner, r.sessionService, r.debug, r.manifest, r.apiKey, r.baseURL, r.modelName, r.maxToolCalls, r.toolCallResetter, r.listContexts, r.switchContext)
 	p := tea.NewProgram(m, tea.WithContext(ctx))
 	_, err := p.Run()
 	return err

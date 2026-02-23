@@ -10,6 +10,18 @@ Kasa is a conversational Kubernetes deployment assistant built with Go, using Go
 go build -o /dev/null
 ```
 
+## Versioning
+
+Use the `bump` CLI tool to manage versions. It updates `.version`, commits, and tags in one step.
+
+```bash
+bump -patch   # v0.3.0 → v0.3.1
+bump -minor   # v0.3.0 → v0.4.0
+bump -major   # v0.3.0 → v1.0.0
+```
+
+**Important:** Run `bump` **after** committing your code changes, not before. The bump creates its own commit and tag. If you bump first and then commit code, the tag will point to the version-bump commit instead of the actual changes. If that happens, delete and recreate the tag on the correct commit.
+
 ## Run non-interactively:
 ```
 go run . -prompt "list namespaces" # Single prompt mode
@@ -20,13 +32,15 @@ go run . -debug -prompt "..."      # With debug output
 
 - `~/.kasa/config.yaml` - All settings: Kubernetes, model, API keys, system prompt
 - Run `kasa init` to create a default config file
-- Environment variables (`GOOGLE_API_KEY`, `JINA_API_KEY`) override config file values
+- Environment variables (`OPENROUTER_API_KEY` or `GOOGLE_API_KEY`, `JINA_API_KEY`) override config file values
+- Uses OpenRouter (OpenAI-compatible API) by default; any OpenAI-compatible provider works by setting `base_url`
 
 ## Project Structure
 
 ```
 kasa/
 ├── main.go              # Entry point, agent setup
+├── openaimodel/         # Vendored OpenAI-compatible model adapter for ADK
 ├── tools/               # All K8s tools (one file per tool, see tools.go for registry)
 ├── repl/                # Interactive REPL with plan/approval workflow
 ├── manifest/            # Manifest file storage with git integration
@@ -170,19 +184,16 @@ func (t *MyTool) Run(ctx tool.Context, args any) (map[string]any, error) {
 
 ### Agent Architecture
 
-The agent uses ADK's runner/session pattern:
+The agent uses ADK's runner/session pattern with an OpenAI-compatible model adapter:
 
 ```go
-// Create Gemini model
-geminiModel, _ := gemini.NewModel(ctx, modelName, &genai.ClientConfig{
-    APIKey:  apiKey,
-    Backend: genai.BackendGeminiAPI,
-})
+// Create LLM model via OpenAI-compatible API (OpenRouter, etc.)
+llmModel := openaimodel.New(modelName, apiKey, baseURL, retryTransport)
 
 // Create agent with tools
 agent, _ := llmagent.New(llmagent.Config{
     Name:        "kasa",
-    Model:       geminiModel,
+    Model:       llmModel,
     Instruction: systemPrompt,
     Tools:       kubeTools.All(),
 })
@@ -274,7 +285,8 @@ See `examples/toolconfirmation/main.go` in the ADK repo for a full Go example.
 ## Dependencies
 
 - `google.golang.org/adk` - Agent Development Kit (runner, session, tool interfaces)
-- `google.golang.org/genai` - Gemini API client and types
+- `google.golang.org/genai` - Gemini/genai types (used by ADK tool interface)
+- `github.com/sashabaranov/go-openai` - OpenAI API client (used by openaimodel adapter and REPL commit messages)
 - `k8s.io/client-go` - Kubernetes typed client and dynamic client
 - `k8s.io/apimachinery` - Kubernetes API types and unstructured objects
 - `gopkg.in/yaml.v3` - Config parsing
@@ -284,4 +296,5 @@ See `examples/toolconfirmation/main.go` in the ADK repo for a full Go example.
 
 Requires:
 - Valid kubeconfig at `~/.kube/config`
-- `GOOGLE_API_KEY` set in `~/.kasa/config.yaml` or as environment variable
+- `OPENROUTER_API_KEY` (or `GOOGLE_API_KEY`) set in `~/.kasa/config.yaml` or as environment variable
+- `agent.model` set in config (e.g., `anthropic/claude-sonnet-4`, `google/gemini-2.5-flash`)

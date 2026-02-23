@@ -9,7 +9,7 @@ import (
 )
 
 func TestModelCtrlCQuits(t *testing.T) {
-	m := newModel(nil, nil, false, nil, "", "", 25, nil, nil, nil)
+	m := newModel(nil, nil, false, nil, "", "", "", 25, nil, nil, nil)
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
 
 	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})

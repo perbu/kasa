@@ -9,6 +9,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/charmbracelet/x/ansi v0.11.5
 	github.com/charmbracelet/x/exp/teatest v0.0.0-20260209194814-eeb2896ac759
+	github.com/sashabaranov/go-openai v1.41.2
 	golang.org/x/term v0.37.0
 	google.golang.org/adk v0.4.0
 	google.golang.org/genai v1.42.0

@@ -13,14 +13,13 @@ import (
 
 	"github.com/charmbracelet/glamour"
 	"github.com/perbu/kasa/manifest"
+	"github.com/perbu/kasa/openaimodel"
 	"github.com/perbu/kasa/repl"
 	"github.com/perbu/kasa/tools"
 	"google.golang.org/adk/agent/llmagent"
-	"google.golang.org/adk/model/gemini"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
 	"google.golang.org/adk/tool"
-	"google.golang.org/genai"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -83,29 +82,23 @@ func main() {
 	// Initialize tools
 	kubeTools := tools.NewKubeTools(clientset, dynamicClient, manifestMgr, jinaAPIKey, cfg.Agent.ToolWarnThreshold)
 
-	// Get Google API key
-	apiKey := cfg.GoogleAPIKey()
+	// Get API key
+	apiKey := cfg.APIKey()
 	if apiKey == "" {
-		log.Fatalf("Google API key not configured. Set GOOGLE_API_KEY env var or google_api_key in ~/.kasa/config.yaml")
+		log.Fatalf("API key not configured. Set OPENROUTER_API_KEY env var or api_key in ~/.kasa/config.yaml")
+	}
+	if cfg.Agent.Model == "" {
+		log.Fatalf("Model not configured. Set agent.model in ~/.kasa/config.yaml (e.g. anthropic/claude-sonnet-4, google/gemini-2.5-flash)")
 	}
 
 	ctx := context.Background()
 
-	// Create Gemini model for ADK with retry transport for transient errors
-	geminiModel, err := gemini.NewModel(ctx, cfg.Agent.Model, &genai.ClientConfig{
-		APIKey:  apiKey,
-		Backend: genai.BackendGeminiAPI,
-		HTTPClient: &http.Client{
-			Transport: &retryTransport{
-				base:       http.DefaultTransport,
-				maxRetries: 3,
-				debug:      *debug,
-			},
-		},
+	// Create LLM model for ADK via OpenAI-compatible API (OpenRouter by default)
+	llmModel := openaimodel.New(cfg.Agent.Model, apiKey, cfg.BaseURL(), &retryTransport{
+		base:       http.DefaultTransport,
+		maxRetries: 3,
+		debug:      *debug,
 	})
-	if err != nil {
-		log.Fatalf("Failed to create Gemini model: %v", err)
-	}
 
 	// Create agent
 	var agentTools []tool.Tool
@@ -138,7 +131,7 @@ func main() {
 	agentConfig := llmagent.Config{
 		Name:        cfg.Agent.Name,
 		Description: "Kubernetes deployment assistant",
-		Model:       geminiModel,
+		Model:       llmModel,
 		Instruction: systemPrompt,
 		Tools:       agentTools,
 	}
@@ -222,7 +215,7 @@ func main() {
 		newToolDocs := newKubeTools.GenerateToolDocs()
 		newSysPrompt := strings.Replace(cfg.Prompts.System, "{{TOOL_DOCS}}", newToolDocs, 1)
 
-		// 4. New agent (reuses the existing geminiModel).
+		// 4. New agent (reuses the existing llmModel).
 		var newAgentTools []tool.Tool
 		if !*noTools {
 			newAgentTools = newKubeTools.All()
@@ -230,7 +223,7 @@ func main() {
 		newAgent, err := llmagent.New(llmagent.Config{
 			Name:        cfg.Agent.Name,
 			Description: "Kubernetes deployment assistant",
-			Model:       geminiModel,
+			Model:       llmModel,
 			Instruction: newSysPrompt,
 			Tools:       newAgentTools,
 		})
@@ -269,7 +262,7 @@ func main() {
 	}
 
 	// Create REPL instance
-	replInstance := repl.New(r, sessionService, *debug, manifestMgr, apiKey, cfg.Agent.Model, cfg.Agent.MaxToolCalls, kubeTools.Counter(), listContextsFn, switchContextFn)
+	replInstance := repl.New(r, sessionService, *debug, manifestMgr, apiKey, cfg.BaseURL(), cfg.Agent.Model, cfg.Agent.MaxToolCalls, kubeTools.Counter(), listContextsFn, switchContextFn)
 
 	// Non-interactive mode (no approval workflow - runs directly)
 	if !isInteractive {
@@ -316,7 +309,7 @@ func runInit() {
 	}
 
 	fmt.Printf("Created config file: %s\n", path)
-	fmt.Println("Edit it to add your Google API key and customize settings.")
+	fmt.Println("Edit it to add your API key, model, and customize settings.")
 }
 
 // initKubeClient initializes a Kubernetes clientset, dynamic client, and resolves

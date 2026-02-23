@@ -29,6 +29,8 @@ type Config struct {
 		System string `yaml:"system"`
 	} `yaml:"prompts"`
 	Credentials struct {
+		APIKey       string `yaml:"api_key"`
+		BaseURL      string `yaml:"base_url"`
 		GoogleAPIKey string `yaml:"google_api_key"`
 		JinaAPIKey   string `yaml:"jina_api_key"`
 	} `yaml:"credentials"`
@@ -79,9 +81,6 @@ func loadConfig() (*Config, error) {
 
 // applyDefaults fills in zero-value fields with sensible defaults.
 func applyDefaults(cfg *Config) {
-	if cfg.Agent.Model == "" {
-		cfg.Agent.Model = "gemini-3-flash-preview"
-	}
 	if cfg.Agent.Name == "" {
 		cfg.Agent.Name = "kasa"
 	}
@@ -99,7 +98,35 @@ func applyDefaults(cfg *Config) {
 	}
 }
 
+// APIKey returns the API key for the LLM provider, checking in order:
+// OPENROUTER_API_KEY env, GOOGLE_API_KEY env, api_key config, google_api_key config.
+func (c *Config) APIKey() string {
+	if v := os.Getenv("OPENROUTER_API_KEY"); v != "" {
+		return v
+	}
+	if v := os.Getenv("GOOGLE_API_KEY"); v != "" {
+		return v
+	}
+	if c.Credentials.APIKey != "" {
+		return c.Credentials.APIKey
+	}
+	return c.Credentials.GoogleAPIKey
+}
+
+// BaseURL returns the base URL for the OpenAI-compatible API.
+// Defaults to OpenRouter if not configured.
+func (c *Config) BaseURL() string {
+	if v := os.Getenv("OPENAI_BASE_URL"); v != "" {
+		return v
+	}
+	if c.Credentials.BaseURL != "" {
+		return c.Credentials.BaseURL
+	}
+	return "https://openrouter.ai/api/v1"
+}
+
 // GoogleAPIKey returns the Google API key, preferring the environment variable.
+// Deprecated: Use APIKey() instead.
 func (c *Config) GoogleAPIKey() string {
 	if v := os.Getenv("GOOGLE_API_KEY"); v != "" {
 		return v
