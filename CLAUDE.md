@@ -292,6 +292,48 @@ See `examples/toolconfirmation/main.go` in the ADK repo for a full Go example.
 - `gopkg.in/yaml.v3` - Config parsing
 - `sigs.k8s.io/yaml` - YAML/JSON conversion for Kubernetes objects
 
+## Analyzing Session Dumps
+
+Kasa dumps session event logs to `~/.kasa/dump-<timestamp>.json` when the agent hits the tool call hard limit. These are useful for diagnosing model behavior (loops, warning compliance, token efficiency).
+
+Dumps are large JSON files. Use this Python one-liner to get a summary:
+
+```bash
+python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+print(f'Total events: {data[\"event_count\"]}')
+tp, tc, tt = 0, 0, 0
+for i, ev in enumerate(data['events']):
+    parts = ev.get('Content', {}).get('parts', [])
+    role = ev['Content'].get('role', '?')
+    desc = []
+    for p in parts:
+        if 'text' in p: desc.append(f'text: {p[\"text\"][:100].replace(chr(10), \" \")}')
+        if 'functionCall' in p: desc.append(f'call: {p[\"functionCall\"][\"name\"]}')
+        if 'functionResponse' in p:
+            r = json.dumps(p['functionResponse'].get('response', {}), default=str)[:100]
+            desc.append(f'resp: {p[\"functionResponse\"][\"name\"]} -> {r}')
+    usage = ev.get('UsageMetadata')
+    tokens = ''
+    if usage:
+        p_, c, t = usage.get('promptTokenCount',0), usage.get('candidatesTokenCount',0), usage.get('thoughtsTokenCount',0)
+        tp += p_; tc += c; tt += t
+        tokens = f' [p:{p_} c:{c} t:{t}]'
+    print(f'{i:3d} [{role}]{tokens} {\" | \".join(desc)}')
+print(f'\nTotals: prompt={tp} candidate={tc} thought={tt}')
+" ~/.kasa/dump-NNNN.json
+```
+
+Key things to look for:
+- **Total events vs tool calls**: high ratio = model is looping
+- **`_warning` in responses**: check if the model pivoted or ignored them
+- **Repeated tool names with similar args**: the hallmark of a stuck loop
+- **Whether a final text answer was given**: did the model complete or get cut off?
+
+See `PATHOLOGICAL.md` for a benchmark comparing model behavior on a known loop-inducing prompt.
+
 ## Testing
 
 Requires:

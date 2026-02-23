@@ -45,6 +45,9 @@ type KubeTools struct {
 // The warnThreshold controls how many calls to the same tool before a warning is
 // injected into the response. Pass 0 to disable per-tool warnings.
 func NewKubeTools(clientset *kubernetes.Clientset, dynamicClient dynamic.Interface, manifest *manifest.Manager, jinaAPIKey string, warnThreshold int) *KubeTools {
+	// Install discovery-backed resolver for dynamic CRD resolution.
+	SetResolver(NewResourceResolver(clientset.Discovery()))
+
 	return &KubeTools{
 		clientset:     clientset,
 		dynamicClient: dynamicClient,

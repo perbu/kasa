@@ -137,6 +137,16 @@ var ClusterScopedKinds = map[string]bool{
 	"gatewayclass":         true,
 }
 
+// resolver is the optional discovery-backed resolver for unknown resource kinds.
+// Set via SetResolver at startup.
+var resolver *ResourceResolver
+
+// SetResolver installs a discovery-backed resolver used as a fallback
+// by LookupGVR, IsNamespaced, BuildGVRFromKindAndAPIVersion, and GVKToGVR.
+func SetResolver(r *ResourceResolver) {
+	resolver = r
+}
+
 // NormalizeKindName converts a kind string (possibly an alias) to its canonical lowercase form.
 func NormalizeKindName(kind string) string {
 	k := strings.ToLower(kind)
@@ -147,17 +157,41 @@ func NormalizeKindName(kind string) string {
 }
 
 // LookupGVR looks up the GroupVersionResource for a kind name.
+// Checks the static CommonGVRs map first, then falls back to the discovery-backed resolver.
 // Returns the GVR and true if found, or zero value and false if not found.
 func LookupGVR(kind string) (schema.GroupVersionResource, bool) {
 	normalized := NormalizeKindName(kind)
-	gvr, ok := CommonGVRs[normalized]
-	return gvr, ok
+	if gvr, ok := CommonGVRs[normalized]; ok {
+		return gvr, true
+	}
+	if resolver != nil {
+		if gvr, _, found := resolver.Resolve(normalized); found {
+			return gvr, true
+		}
+	}
+	return schema.GroupVersionResource{}, false
 }
 
 // IsNamespaced returns true if the kind is namespaced (not cluster-scoped).
+// Checks the static ClusterScopedKinds map first, then falls back to the discovery resolver
+// for accurate scoping of unknown resource types.
 func IsNamespaced(kind string) bool {
 	normalized := NormalizeKindName(kind)
-	return !ClusterScopedKinds[normalized]
+	if ClusterScopedKinds[normalized] {
+		return false
+	}
+	// For kinds in CommonGVRs but not in ClusterScopedKinds, they're namespaced.
+	if _, ok := CommonGVRs[normalized]; ok {
+		return true
+	}
+	// For unknown kinds, ask the resolver for accurate scoping.
+	if resolver != nil {
+		if _, namespaced, found := resolver.Resolve(normalized); found {
+			return namespaced
+		}
+	}
+	// Default to namespaced if unknown.
+	return true
 }
 
 // ParseYAMLToUnstructured parses YAML content into an unstructured.Unstructured object.
@@ -170,7 +204,7 @@ func ParseYAMLToUnstructured(content []byte) (*unstructured.Unstructured, error)
 }
 
 // GVKToGVR converts a GroupVersionKind to a GroupVersionResource.
-// It uses simple pluralization rules (adds 's' or 'es').
+// Checks known GVRs, then the discovery resolver, then falls back to heuristic pluralization.
 func GVKToGVR(gvk schema.GroupVersionKind) schema.GroupVersionResource {
 	// First check if we have a known GVR for this kind
 	if gvr, ok := LookupGVR(gvk.Kind); ok {
@@ -179,6 +213,13 @@ func GVKToGVR(gvk schema.GroupVersionKind) schema.GroupVersionResource {
 			Group:    gvk.Group,
 			Version:  gvk.Version,
 			Resource: gvr.Resource,
+		}
+	}
+
+	// Try the discovery resolver for accurate resource name
+	if resolver != nil {
+		if gvr, ok := resolver.ResolveGVK(gvk); ok {
+			return gvr
 		}
 	}
 
@@ -209,11 +250,12 @@ func ParseAPIVersion(apiVersion string) (group, version string) {
 }
 
 // BuildGVRFromKindAndAPIVersion builds a GVR from a kind and apiVersion string.
-// If apiVersion is empty, it tries to look up the GVR from CommonGVRs.
+// If apiVersion is empty, it tries the static map then the discovery resolver.
+// If apiVersion is provided, it uses the caller's group/version with a discovered resource name.
 func BuildGVRFromKindAndAPIVersion(kind, apiVersion string) (schema.GroupVersionResource, bool) {
 	normalized := NormalizeKindName(kind)
 
-	// If no apiVersion provided, try to look up from known resources
+	// If no apiVersion provided, try to look up from known resources (includes resolver fallback)
 	if apiVersion == "" {
 		return LookupGVR(normalized)
 	}
@@ -228,6 +270,17 @@ func BuildGVRFromKindAndAPIVersion(kind, apiVersion string) (schema.GroupVersion
 			Version:  version,
 			Resource: gvr.Resource,
 		}, true
+	}
+
+	// Try the discovery resolver for accurate resource name
+	if resolver != nil {
+		if gvr, _, found := resolver.Resolve(normalized); found {
+			return schema.GroupVersionResource{
+				Group:    group,
+				Version:  version,
+				Resource: gvr.Resource,
+			}, true
+		}
 	}
 
 	// Fall back to simple pluralization
