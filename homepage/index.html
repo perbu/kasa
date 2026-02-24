@@ -41,7 +41,7 @@
             </div>
             <div class="terminal-body">
 <pre><img src="logo.png" alt="KASA" class="terminal-logo">
-<span class="t-dim">Kubernetes Deployment Assistant v0.2.0</span>
+<span class="t-dim">Kubernetes Deployment Assistant v0.3.1</span>
 
 <span class="t-green">❯</span> deploy nginx with 3 replicas in production
 
@@ -106,7 +106,7 @@
 
 <section class="how-it-works" id="how-it-works">
     <h2>How It Works</h2>
-    <p class="section-sub">Kasa uses Google Gemini AI with an agent framework to understand your requests and interact with your Kubernetes cluster through a rich set of tools.</p>
+    <p class="section-sub">Kasa uses an LLM agent framework with any OpenAI-compatible provider (via OpenRouter or direct) to understand your requests and interact with your Kubernetes cluster through a rich set of tools.</p>
 
     <div class="steps">
         <div class="step">
@@ -198,7 +198,7 @@
             <div class="code-block">
                 <pre><code>kasa init</code></pre>
             </div>
-            <p>Creates <code>~/.kasa/config.yaml</code> with defaults. Add your <code>GOOGLE_API_KEY</code> and <code>JINA_API_KEY</code> to the config or set them as environment variables.</p>
+            <p>Creates <code>~/.kasa/config.yaml</code> with defaults. Add your <code>OPENROUTER_API_KEY</code> and <code>JINA_API_KEY</code> to the config or set them as environment variables.</p>
         </div>
         <div class="install-step">
             <h3>Run</h3>
@@ -225,8 +225,8 @@ kasa -prompt "list all pods in default namespace"</code></pre>
             <p>With a valid kubeconfig</p>
         </div>
         <div class="req-card">
-            <strong>Google API Key</strong>
-            <p>For Gemini AI access</p>
+            <strong>OpenRouter API Key</strong>
+            <p>For LLM access</p>
         </div>
         <div class="req-card">
             <strong>Jina API Key</strong>
