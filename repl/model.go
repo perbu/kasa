@@ -858,9 +858,12 @@ func (m *model) commitAsync() tea.Cmd {
 			return cmdResultMsg{lines: []string{fmt.Sprintf("Failed to get diff: %v", err)}}
 		}
 
-		conversationContext := m.extractConversationSummary()
+		var changeLog string
+		if changes := m.manifest.Changes(); len(changes) > 0 {
+			changeLog = "- " + strings.Join(changes, "\n- ")
+		}
 
-		commitMsg, err := m.generateCommitMessage(diff, conversationContext)
+		commitMsg, err := m.generateCommitMessage(diff, changeLog)
 		if err != nil {
 			return cmdResultMsg{lines: []string{fmt.Sprintf("Failed to generate commit message: %v", err)}}
 		}
@@ -938,7 +941,7 @@ func (m model) handleStatus(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 
 // generateCommitMessage makes a one-shot LLM call to generate a commit message from a diff
 // and conversation context. Returns a conventional commit message with subject and body.
-func (m *model) generateCommitMessage(diff, conversationContext string) (string, error) {
+func (m *model) generateCommitMessage(diff, changeLog string) (string, error) {
 	ctx := context.Background()
 
 	cfg := openai.DefaultConfig(m.apiKey)
@@ -953,16 +956,16 @@ func (m *model) generateCommitMessage(diff, conversationContext string) (string,
 	}
 
 	var prompt string
-	if conversationContext != "" {
+	if changeLog != "" {
 		prompt = fmt.Sprintf(`Generate a git commit message for these Kubernetes manifest changes.
 
-Conversation context (what the user asked for and why):
+Change log:
 %s
 
 Diff:
 %s
 
-Format: A subject line (imperative mood, max 72 chars), then a blank line, then a brief body explaining the intent behind these changes. Do not use markdown formatting. Output the commit message only, nothing else.`, conversationContext, truncated)
+Format: A subject line (imperative mood, max 72 chars), then a blank line, then a brief body explaining the intent behind these changes. Do not use markdown formatting. Output the commit message only, nothing else.`, changeLog, truncated)
 	} else {
 		prompt = fmt.Sprintf(`Generate a git commit message for these Kubernetes manifest changes.
 
@@ -989,49 +992,6 @@ Format: A subject line (imperative mood, max 72 chars), then a blank line, then 
 	msg := strings.TrimSpace(resp.Choices[0].Message.Content)
 	msg = strings.Trim(msg, "`\"")
 	return msg, nil
-}
-
-// extractConversationSummary pulls user messages and agent text from the ADK session
-// to provide context for commit message generation.
-func (m *model) extractConversationSummary() string {
-	ctx := context.Background()
-
-	resp, err := m.sessionService.Get(ctx, &session.GetRequest{
-		AppName:   "kasa",
-		UserID:    "user1",
-		SessionID: m.sessionID,
-	})
-	if err != nil {
-		return ""
-	}
-
-	var sb strings.Builder
-	const maxLen = 2000
-
-	for evt := range resp.Session.Events().All() {
-		if evt.Content == nil {
-			continue
-		}
-		for _, part := range evt.Content.Parts {
-			if part.Text == "" {
-				continue
-			}
-			prefix := ""
-			if evt.Author == "user" || evt.Content.Role == "user" {
-				prefix = "User: "
-			} else {
-				prefix = "Agent: "
-			}
-			line := prefix + part.Text + "\n"
-			if sb.Len()+len(line) > maxLen {
-				sb.WriteString("... (truncated)\n")
-				return sb.String()
-			}
-			sb.WriteString(line)
-		}
-	}
-
-	return sb.String()
 }
 
 // renderMarkdown renders text through glamour, falling back to plain text.
@@ -1100,6 +1060,13 @@ func (m model) buildDividerLine() string {
 		planStr = noPlanStyle.Render("no plan")
 	}
 
+	var ctxStr string
+	var ctxPlain string
+	if m.inputTokens > 0 {
+		ctxPlain = fmt.Sprintf("ctx: %s", formatTokenCount(m.inputTokens))
+		ctxStr = tokenStyle.Render(ctxPlain)
+	}
+
 	var tokenStr string
 	var tokenPlain string
 	if m.totalInputTokens > 0 {
@@ -1124,6 +1091,11 @@ func (m model) buildDividerLine() string {
 		plainLen += len("plan pending")
 	} else {
 		plainLen += len("no plan")
+	}
+
+	if ctxStr != "" {
+		parts = append(parts, ctxStr)
+		plainLen += len(ctxPlain)
 	}
 
 	if tokenStr != "" {

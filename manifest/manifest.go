@@ -14,6 +14,7 @@ import (
 type Manager struct {
 	baseDir string
 	context string
+	changes []string
 }
 
 // ManifestInfo contains metadata about a manifest file.
@@ -66,6 +67,23 @@ func (m *Manager) BaseDir() string {
 // Context returns the cluster context name.
 func (m *Manager) Context() string {
 	return m.context
+}
+
+// RecordChange appends a human-readable entry to the change log.
+func (m *Manager) RecordChange(entry string) {
+	m.changes = append(m.changes, entry)
+}
+
+// Changes returns a copy of the change log.
+func (m *Manager) Changes() []string {
+	out := make([]string, len(m.changes))
+	copy(out, m.changes)
+	return out
+}
+
+// ClearChanges resets the change log.
+func (m *Manager) ClearChanges() {
+	m.changes = nil
 }
 
 // ListContexts returns the names of all context subdirectories in baseDir.
@@ -131,6 +149,7 @@ func (m *Manager) SaveManifest(namespace, appName, resourceType string, content 
 		return "", fmt.Errorf("staging manifest file: %w", err)
 	}
 
+	m.RecordChange(fmt.Sprintf("Saved %s for %s in %s", resourceType, appName, namespace))
 	return path, nil
 }
 
@@ -171,6 +190,7 @@ func (m *Manager) Commit(message string) error {
 		return fmt.Errorf("git commit failed: %w\nOutput: %s", err, string(output))
 	}
 
+	m.ClearChanges()
 	return nil
 }
 
@@ -294,6 +314,7 @@ func (m *Manager) DeleteManifest(namespace, app, resourceType string) ([]string,
 		}
 
 		deleted = append(deleted, relPath)
+		m.RecordChange(fmt.Sprintf("Deleted %s manifest for %s in %s", resourceType, app, namespace))
 	} else {
 		// Delete all manifests for the app
 		appDir := filepath.Join(ctxDir, namespace, app)
@@ -324,6 +345,10 @@ func (m *Manager) DeleteManifest(namespace, app, resourceType string) ([]string,
 
 			deleted = append(deleted, relPath)
 		}
+	}
+
+	if resourceType == "" && len(deleted) > 0 {
+		m.RecordChange(fmt.Sprintf("Deleted all manifests for %s in %s", app, namespace))
 	}
 
 	// Clean up empty app directory
@@ -533,6 +558,15 @@ func (m *Manager) SaveNotes(namespace, app, content string) (string, error) {
 		return "", fmt.Errorf("staging notes file: %w", err)
 	}
 
+	switch {
+	case namespace != "" && app != "":
+		m.RecordChange(fmt.Sprintf("Updated deployment notes for %s/%s", namespace, app))
+	case namespace != "":
+		m.RecordChange(fmt.Sprintf("Updated deployment notes for namespace %s", namespace))
+	default:
+		m.RecordChange("Updated deployment notes for context")
+	}
+
 	return path, nil
 }
 
@@ -593,6 +627,10 @@ func (m *Manager) DeleteNamespace(namespace string) ([]string, error) {
 
 	if err != nil {
 		return deleted, err
+	}
+
+	if len(deleted) > 0 {
+		m.RecordChange(fmt.Sprintf("Deleted all manifests for namespace %s", namespace))
 	}
 
 	// Clean up empty directories
