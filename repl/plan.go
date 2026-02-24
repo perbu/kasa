@@ -113,12 +113,91 @@ func computePlanDiffs(plan *Plan, fetcher ResourceFetcher) map[int]string {
 		if err != nil || existing == "" {
 			continue
 		}
-		diff := udiff.Unified("cluster", "proposed", normalizeYAML(existing), normalizeYAML(yamlContent))
+		// Prune server-side defaults from the live YAML so the diff only
+		// shows fields the user actually manages in their manifest.
+		prunedExisting := pruneToProposedYAML(existing, yamlContent)
+		diff := udiff.Unified("cluster", "proposed", normalizeYAML(prunedExisting), normalizeYAML(yamlContent))
 		if diff != "" {
 			diffs[i] = diff
 		}
 	}
 	return diffs
+}
+
+// pruneToProposedYAML parses both YAML strings into maps, prunes keys from
+// the live map that don't exist in the proposed map, and re-marshals the result.
+// This removes server-side defaults from the diff. Falls back to the original
+// live YAML on any parse error.
+func pruneToProposedYAML(liveYAML, proposedYAML string) string {
+	var liveMap, proposedMap map[string]any
+	if err := sigsyaml.Unmarshal([]byte(liveYAML), &liveMap); err != nil {
+		return liveYAML
+	}
+	if err := sigsyaml.Unmarshal([]byte(proposedYAML), &proposedMap); err != nil {
+		return liveYAML
+	}
+	pruned := pruneToProposed(liveMap, proposedMap)
+	out, err := sigsyaml.Marshal(pruned)
+	if err != nil {
+		return liveYAML
+	}
+	return string(out)
+}
+
+// pruneToProposed recursively removes keys from live that don't exist in
+// proposed. For nested maps it recurses; for slices of maps it matches by
+// index and recurses each pair.
+func pruneToProposed(live, proposed map[string]any) map[string]any {
+	result := make(map[string]any, len(proposed))
+	for key, proposedVal := range proposed {
+		liveVal, ok := live[key]
+		if !ok {
+			// Key only in proposed — keep it so it shows as an addition in the diff.
+			result[key] = proposedVal
+			continue
+		}
+
+		// Both sides are maps — recurse.
+		pMap, pIsMap := proposedVal.(map[string]any)
+		lMap, lIsMap := liveVal.(map[string]any)
+		if pIsMap && lIsMap {
+			result[key] = pruneToProposed(lMap, pMap)
+			continue
+		}
+
+		// Both sides are slices — recurse into map elements by index.
+		pSlice, pIsSlice := proposedVal.([]any)
+		lSlice, lIsSlice := liveVal.([]any)
+		if pIsSlice && lIsSlice {
+			result[key] = pruneSlice(lSlice, pSlice)
+			continue
+		}
+
+		// Scalar or mismatched types — keep the live value as-is.
+		result[key] = liveVal
+	}
+	return result
+}
+
+// pruneSlice matches slice elements by index. For map elements it recurses
+// via pruneToProposed; other element types are kept from live as-is.
+func pruneSlice(live, proposed []any) []any {
+	result := make([]any, 0, len(proposed))
+	for i, pElem := range proposed {
+		if i >= len(live) {
+			// Extra proposed element — keep it so it shows as an addition.
+			result = append(result, pElem)
+			continue
+		}
+		pMap, pIsMap := pElem.(map[string]any)
+		lMap, lIsMap := live[i].(map[string]any)
+		if pIsMap && lIsMap {
+			result = append(result, pruneToProposed(lMap, pMap))
+		} else {
+			result = append(result, live[i])
+		}
+	}
+	return result
 }
 
 // normalizeYAML parses and re-marshals YAML so that key ordering is
