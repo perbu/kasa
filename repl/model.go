@@ -40,6 +40,9 @@ type contextSwitchMsg struct {
 	err    error
 }
 
+// planRenderedMsg carries a fully rendered plan string from an async computation.
+type planRenderedMsg struct{ text string }
+
 // model is the bubbletea Model for the interactive REPL.
 type model struct {
 	textarea textarea.Model
@@ -92,7 +95,9 @@ type model struct {
 	showContextSelect bool
 	ctxModal          contextSelectorModal
 	listContexts      ContextListFunc
-	switchContext      ContextSwitchFunc
+	switchContext     ContextSwitchFunc
+
+	resourceFetcher ResourceFetcher
 
 	quitting bool
 }
@@ -112,7 +117,7 @@ var debugStyle = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("8"))
 // toolCallStyle is the dim style for persistent tool call log lines.
 var toolCallStyle = lipgloss.NewStyle().Faint(true)
 
-func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, listContexts ContextListFunc, switchContext ContextSwitchFunc) model {
+func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, listContexts ContextListFunc, switchContext ContextSwitchFunc, resourceFetcher ResourceFetcher) model {
 	ta := textarea.New()
 	ta.Placeholder = "Type a message..."
 	ta.SetPromptFunc(2, func(line int) string {
@@ -172,8 +177,9 @@ func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manife
 		maxToolCalls:     maxToolCalls,
 		toolCallResetter: toolCallResetter,
 		eventCh:          make(chan agentEventMsg, 64),
-		listContexts:   listContexts,
+		listContexts:    listContexts,
 		switchContext:   switchContext,
+		resourceFetcher: resourceFetcher,
 	}
 }
 
@@ -318,6 +324,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, tea.Println(line))
 		}
 		return m, tea.Batch(cmds...)
+
+	case planRenderedMsg:
+		return m, tea.Println(msg.text)
 	}
 
 	return m, nil
@@ -425,7 +434,12 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 
 	case "/plan":
 		if m.state.HasPendingPlan() {
-			cmds = append(cmds, tea.Println(RenderPlan(m.state.PendingPlan)))
+			plan := m.state.PendingPlan
+			fetcher := m.resourceFetcher
+			cmds = append(cmds, func() tea.Msg {
+				diffs := computePlanDiffs(plan, fetcher)
+				return planRenderedMsg{text: RenderPlan(plan, diffs)}
+			})
 		} else {
 			cmds = append(cmds, tea.Println("No pending plan."))
 		}
@@ -624,9 +638,14 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 
 		cmds = append(cmds, m.textarea.Focus())
 
-		// Display pending plan
+		// Display pending plan (async to allow diff fetching without blocking UI)
 		if m.state.HasPendingPlan() {
-			cmds = append(cmds, tea.Println(RenderPlan(m.state.PendingPlan)))
+			plan := m.state.PendingPlan
+			fetcher := m.resourceFetcher
+			cmds = append(cmds, func() tea.Msg {
+				diffs := computePlanDiffs(plan, fetcher)
+				return planRenderedMsg{text: RenderPlan(plan, diffs)}
+			})
 		}
 
 		// After plan execution, reset if no new plan was proposed
@@ -784,6 +803,7 @@ func (m model) handleContextSwitch(msg contextSwitchMsg) (tea.Model, tea.Cmd) {
 	m.runner = msg.result.Runner
 	m.sessionService = msg.result.SessionService
 	m.manifest = msg.result.Manifest
+	m.resourceFetcher = msg.result.ResourceFetcher
 
 	// Reset session (same as /clear).
 	ctx := context.Background()

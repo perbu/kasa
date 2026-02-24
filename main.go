@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/glamour"
 	"github.com/perbu/kasa/manifest"
@@ -24,6 +25,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
+	sigsyaml "sigs.k8s.io/yaml"
 )
 
 //go:embed .version
@@ -187,6 +189,42 @@ func main() {
 		return ctxs, nil
 	}
 
+	// makeResourceFetcher builds a ResourceFetcher closure for a given dynamic client.
+	// It parses the proposed YAML, fetches the live cluster resource, and returns
+	// clean YAML suitable for diffing. Returns ("", nil) for new resources.
+	makeResourceFetcher := func(dynClient dynamic.Interface) repl.ResourceFetcher {
+		return func(yamlContent string) (string, error) {
+			var m map[string]any
+			if err := sigsyaml.Unmarshal([]byte(yamlContent), &m); err != nil {
+				return "", err
+			}
+			kind, _ := m["kind"].(string)
+			apiVersion, _ := m["apiVersion"].(string)
+			namespace, name := "", ""
+			if meta, ok := m["metadata"].(map[string]any); ok {
+				namespace, _ = meta["namespace"].(string)
+				name, _ = meta["name"].(string)
+			}
+			if kind == "" || name == "" {
+				return "", nil
+			}
+			fetchCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			liveMap, err := tools.FetchAndCleanLiveResource(fetchCtx, dynClient, namespace, name, kind, apiVersion)
+			if err != nil {
+				if strings.Contains(err.Error(), "not found") {
+					return "", nil // new resource — no diff
+				}
+				return "", err
+			}
+			yamlBytes, err := sigsyaml.Marshal(liveMap)
+			if err != nil {
+				return "", err
+			}
+			return string(yamlBytes), nil
+		}
+	}
+
 	switchContextFn := func(contextName string) (*repl.ContextSwitchResult, error) {
 		// 1. Build new Kubernetes clients.
 		newClientset, newDynamic, resolvedCtx, err := initKubeClient(kubeconfigPath, contextName)
@@ -254,15 +292,16 @@ func main() {
 		activeKubeContext = resolvedCtx
 
 		return &repl.ContextSwitchResult{
-			Runner:         newRunner,
-			SessionService: newSS,
-			Manifest:       newManifest,
-			ContextName:    resolvedCtx,
+			Runner:          newRunner,
+			SessionService:  newSS,
+			Manifest:        newManifest,
+			ContextName:     resolvedCtx,
+			ResourceFetcher: makeResourceFetcher(newDynamic),
 		}, nil
 	}
 
 	// Create REPL instance
-	replInstance := repl.New(r, sessionService, *debug, manifestMgr, apiKey, cfg.BaseURL(), cfg.Agent.Model, cfg.Agent.MaxToolCalls, kubeTools.Counter(), listContextsFn, switchContextFn)
+	replInstance := repl.New(r, sessionService, *debug, manifestMgr, apiKey, cfg.BaseURL(), cfg.Agent.Model, cfg.Agent.MaxToolCalls, kubeTools.Counter(), listContextsFn, switchContextFn, makeResourceFetcher(dynamicClient))
 
 	// Non-interactive mode (no approval workflow - runs directly)
 	if !isInteractive {

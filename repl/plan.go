@@ -3,25 +3,28 @@ package repl
 import (
 	"fmt"
 	"strings"
+
+	udiff "github.com/aymanbagabas/go-udiff"
 )
 
 // RenderPlan renders a plan to a string using glamour markdown rendering.
 // Returns the rendered string, or plain markdown if rendering fails.
-func RenderPlan(plan *Plan) string {
+// diffs is a map from action index to unified diff string; nil means no diffs.
+func RenderPlan(plan *Plan, diffs map[int]string) string {
 	if plan == nil {
 		return "No plan to display.\n"
 	}
 
-	return renderMarkdownSimple(buildPlanMarkdown(plan))
+	return renderMarkdownSimple(buildPlanMarkdown(plan, diffs))
 }
 
 // DisplayPlan formats and prints a proposed plan for user review.
-func DisplayPlan(plan *Plan) {
-	fmt.Print(RenderPlan(plan))
+func DisplayPlan(plan *Plan, diffs map[int]string) {
+	fmt.Print(RenderPlan(plan, diffs))
 }
 
 // buildPlanMarkdown builds the markdown string for a plan.
-func buildPlanMarkdown(plan *Plan) string {
+func buildPlanMarkdown(plan *Plan, diffs map[int]string) string {
 	var md strings.Builder
 	md.WriteString("# Proposed Plan\n\n")
 	md.WriteString(plan.Description)
@@ -68,11 +71,53 @@ func buildPlanMarkdown(plan *Plan) string {
 				md.WriteString("```\n\n")
 			}
 		}
+
+		// For apply_resource actions, show diff from current cluster state if available
+		if action.Tool == "apply_resource" {
+			if diff, ok := diffs[i]; ok && diff != "" {
+				md.WriteString("**Diff from current cluster state:**\n")
+				md.WriteString("```diff\n")
+				md.WriteString(diff)
+				if !strings.HasSuffix(diff, "\n") {
+					md.WriteString("\n")
+				}
+				md.WriteString("```\n\n")
+			}
+		}
 	}
 
 	md.WriteString("---\n\n")
 	md.WriteString("**Commands:** `/approve` approve · `/abort` reject · `/plan` show again\n")
 	return md.String()
+}
+
+// computePlanDiffs computes unified diffs between the current cluster state and
+// the proposed YAML for each apply_resource action in the plan.
+// Returns nil when fetcher is nil (no-op for non-interactive mode).
+func computePlanDiffs(plan *Plan, fetcher ResourceFetcher) map[int]string {
+	if fetcher == nil || plan == nil {
+		return nil
+	}
+
+	diffs := make(map[int]string)
+	for i, action := range plan.Actions {
+		if action.Tool != "apply_resource" {
+			continue
+		}
+		yamlContent, ok := action.Parameters["yaml"].(string)
+		if !ok || yamlContent == "" {
+			continue
+		}
+		existing, err := fetcher(yamlContent)
+		if err != nil || existing == "" {
+			continue
+		}
+		diff := udiff.Unified("cluster", "proposed", existing, yamlContent)
+		if diff != "" {
+			diffs[i] = diff
+		}
+	}
+	return diffs
 }
 
 // formatParameters formats parameter map for display.

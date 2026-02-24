@@ -17,6 +17,10 @@ import (
 	"google.golang.org/genai"
 )
 
+// ResourceFetcher returns the current cluster state of a resource as clean YAML,
+// given the proposed YAML. Returns ("", nil) when the resource doesn't exist yet.
+type ResourceFetcher func(yamlContent string) (string, error)
+
 // ContextInfo describes a single kubeconfig context.
 type ContextInfo struct {
 	Name    string
@@ -29,10 +33,11 @@ type ContextListFunc func() ([]ContextInfo, error)
 
 // ContextSwitchResult carries the rebuilt stack after a context switch.
 type ContextSwitchResult struct {
-	Runner         *runner.Runner
-	SessionService session.Service
-	Manifest       *manifest.Manager
-	ContextName    string
+	Runner          *runner.Runner
+	SessionService  session.Service
+	Manifest        *manifest.Manager
+	ContextName     string
+	ResourceFetcher ResourceFetcher
 }
 
 // ContextSwitchFunc rebuilds the entire agent stack for a new context.
@@ -56,11 +61,12 @@ type REPL struct {
 	maxToolCalls     int
 	toolCallResetter ToolCallResetter
 	listContexts     ContextListFunc
-	switchContext     ContextSwitchFunc
+	switchContext    ContextSwitchFunc
+	resourceFetcher  ResourceFetcher
 }
 
 // New creates a new REPL instance.
-func New(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, listContexts ContextListFunc, switchContext ContextSwitchFunc) *REPL {
+func New(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, listContexts ContextListFunc, switchContext ContextSwitchFunc, resourceFetcher ResourceFetcher) *REPL {
 	return &REPL{
 		runner:           r,
 		sessionService:   ss,
@@ -72,7 +78,8 @@ func New(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Ma
 		maxToolCalls:     maxToolCalls,
 		toolCallResetter: toolCallResetter,
 		listContexts:     listContexts,
-		switchContext:     switchContext,
+		switchContext:    switchContext,
+		resourceFetcher:  resourceFetcher,
 	}
 }
 
@@ -84,7 +91,7 @@ func (r *REPL) Run(ctx context.Context) error {
 	// late end up in stdin and get interpreted as user input by bubbletea.
 	drainStdin()
 
-	m := newModel(r.runner, r.sessionService, r.debug, r.manifest, r.apiKey, r.baseURL, r.modelName, r.maxToolCalls, r.toolCallResetter, r.listContexts, r.switchContext)
+	m := newModel(r.runner, r.sessionService, r.debug, r.manifest, r.apiKey, r.baseURL, r.modelName, r.maxToolCalls, r.toolCallResetter, r.listContexts, r.switchContext, r.resourceFetcher)
 	p := tea.NewProgram(m, tea.WithContext(ctx))
 	_, err := p.Run()
 	return err
@@ -155,7 +162,7 @@ func (r *REPL) runAgentSync(ctx context.Context, state *SessionState, prompt str
 	}
 
 	if state != nil && state.HasPendingPlan() {
-		DisplayPlan(state.PendingPlan)
+		DisplayPlan(state.PendingPlan, nil)
 	}
 
 	return nil
