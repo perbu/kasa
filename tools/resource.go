@@ -303,5 +303,20 @@ func (t *GetResourceTool) getDynamicResource(ctx context.Context, namespace, nam
 	result := obj.Object
 	cleanMetadata(result)
 
+	// Redact secret data regardless of how the resource was fetched
+	normalizedKind := strings.ToLower(kind)
+	if normalizedKind == "secret" || normalizedKind == "secrets" {
+		if data, ok := result["data"].(map[string]any); ok {
+			for key := range data {
+				data[key] = "[REDACTED]"
+			}
+		}
+		if stringData, ok := result["stringData"].(map[string]any); ok {
+			for key := range stringData {
+				stringData[key] = "[REDACTED]"
+			}
+		}
+	}
+
 	return result, nil
 }
