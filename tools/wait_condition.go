@@ -158,7 +158,7 @@ func (t *WaitForConditionTool) Run(ctx tool.Context, args any) (map[string]any, 
 	for {
 		polls++
 
-		met, state, err := t.checkCondition(normalizedKind, name, namespace, condition)
+		met, state, err := t.checkCondition(ctx, normalizedKind, name, namespace, condition)
 		if err != nil {
 			// For "deleted" condition, NotFound error means success
 			if condition == "deleted" && errors.IsNotFound(err) {
@@ -222,13 +222,22 @@ func (t *WaitForConditionTool) Run(ctx tool.Context, args any) (map[string]any, 
 			}, nil
 		}
 
-		// Wait for next poll
+		// Wait for next poll, honouring context cancellation.
 		select {
+		case <-ctx.Done():
+			return map[string]any{
+				"success":         false,
+				"condition_met":   false,
+				"elapsed_seconds": int(time.Since(startTime).Seconds()),
+				"polls":           polls,
+				"final_state":     state,
+				"message":         "Cancelled by user",
+			}, nil
 		case <-ticker.C:
 			continue
 		case <-time.After(timeoutDuration - time.Since(startTime)):
 			// Final check before timeout
-			met, state, err := t.checkCondition(normalizedKind, name, namespace, condition)
+			met, state, err := t.checkCondition(ctx, normalizedKind, name, namespace, condition)
 			if err == nil && met {
 				elapsed := time.Since(startTime).Seconds()
 				return map[string]any{
@@ -254,8 +263,8 @@ func (t *WaitForConditionTool) Run(ctx tool.Context, args any) (map[string]any, 
 
 // checkCondition checks if the resource meets the specified condition.
 // Returns (conditionMet, statusMessage, error).
-func (t *WaitForConditionTool) checkCondition(kind, name, namespace, condition string) (bool, string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+func (t *WaitForConditionTool) checkCondition(parent context.Context, kind, name, namespace, condition string) (bool, string, error) {
+	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 	defer cancel()
 
 	switch kind {

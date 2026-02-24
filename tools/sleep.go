@@ -95,7 +95,18 @@ func (t *SleepTool) Run(ctx tool.Context, args any) (map[string]any, error) {
 
 	duration := time.Duration(seconds * float64(time.Second))
 	start := time.Now()
-	time.Sleep(duration)
+	if ctx != nil {
+		select {
+		case <-time.After(duration):
+		case <-ctx.Done():
+			return map[string]any{
+				"slept_seconds": time.Since(start).Seconds(),
+				"message":       "Cancelled by user",
+			}, nil
+		}
+	} else {
+		time.Sleep(duration)
+	}
 	elapsed := time.Since(start)
 
 	return map[string]any{

@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -173,7 +174,8 @@ func TestProposePlanTool(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if result["error"] != "action missing tool name" {
+		errStr, _ := result["error"].(string)
+		if !strings.Contains(errStr, "missing required fields") || !strings.Contains(errStr, "tool") {
 			t.Errorf("unexpected error: %v", result["error"])
 		}
 	})
@@ -188,7 +190,8 @@ func TestProposePlanTool(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if result["error"] != "action missing reason" {
+		errStr, _ := result["error"].(string)
+		if !strings.Contains(errStr, "missing required fields") || !strings.Contains(errStr, "reason") {
 			t.Errorf("unexpected error: %v", result["error"])
 		}
 	})
