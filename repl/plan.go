@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	udiff "github.com/aymanbagabas/go-udiff"
+	sigsyaml "sigs.k8s.io/yaml"
 )
 
 // RenderPlan renders a plan to a string using glamour markdown rendering.
@@ -112,12 +113,27 @@ func computePlanDiffs(plan *Plan, fetcher ResourceFetcher) map[int]string {
 		if err != nil || existing == "" {
 			continue
 		}
-		diff := udiff.Unified("cluster", "proposed", existing, yamlContent)
+		diff := udiff.Unified("cluster", "proposed", normalizeYAML(existing), normalizeYAML(yamlContent))
 		if diff != "" {
 			diffs[i] = diff
 		}
 	}
 	return diffs
+}
+
+// normalizeYAML parses and re-marshals YAML so that key ordering is
+// consistent (alphabetical via sigs.k8s.io/yaml). This prevents
+// cosmetic key-reordering noise in diffs.
+func normalizeYAML(yamlStr string) string {
+	var m map[string]any
+	if err := sigsyaml.Unmarshal([]byte(yamlStr), &m); err != nil {
+		return yamlStr
+	}
+	out, err := sigsyaml.Marshal(m)
+	if err != nil {
+		return yamlStr
+	}
+	return string(out)
 }
 
 // formatParameters formats parameter map for display.

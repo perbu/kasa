@@ -108,7 +108,7 @@ func TestBuildPlanMarkdown(t *testing.T) {
 		},
 	}
 
-	md := buildPlanMarkdown(plan)
+	md := buildPlanMarkdown(plan, nil)
 
 	if !strings.Contains(md, "# Proposed Plan") {
 		t.Error("expected markdown heading")
@@ -141,7 +141,7 @@ func TestBuildPlanMarkdownMultilineParams(t *testing.T) {
 		},
 	}
 
-	md := buildPlanMarkdown(plan)
+	md := buildPlanMarkdown(plan, nil)
 	if !strings.Contains(md, "```yaml") {
 		t.Error("expected yaml code block for multiline parameter")
 	}
@@ -220,8 +220,64 @@ func TestGetString(t *testing.T) {
 	}
 }
 
+func TestNormalizeYAML(t *testing.T) {
+	// Same content, different key ordering
+	a := "apiVersion: v1\ndata:\n  key: value\nkind: ConfigMap\nmetadata:\n  name: test\n"
+	b := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test\ndata:\n  key: value\n"
+
+	na := normalizeYAML(a)
+	nb := normalizeYAML(b)
+	if na != nb {
+		t.Errorf("normalized YAML should match:\n--- a ---\n%s\n--- b ---\n%s", na, nb)
+	}
+}
+
+func TestComputePlanDiffsNormalizesKeyOrder(t *testing.T) {
+	// Cluster returns keys in alphabetical order (data before kind)
+	clusterYAML := "apiVersion: v1\ndata:\n  user.vcl: |\n    sub vcl_recv {\n    }\nkind: ConfigMap\nmetadata:\n  name: test\n  namespace: default\n"
+
+	// Proposed has conventional order (kind before metadata before data) + one new line
+	proposedYAML := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test\n  namespace: default\ndata:\n  user.vcl: |\n    sub vcl_recv {\n        return (synth(403));\n    }\n"
+
+	fetcher := func(yaml string) (string, error) {
+		return clusterYAML, nil
+	}
+
+	plan := &Plan{
+		Description: "test",
+		Actions: []PlannedAction{
+			{
+				Tool:       "apply_resource",
+				Reason:     "update config",
+				Parameters: map[string]any{"yaml": proposedYAML},
+			},
+		},
+	}
+
+	diffs := computePlanDiffs(plan, fetcher)
+	diff, ok := diffs[0]
+	if !ok {
+		t.Fatal("expected a diff for action 0")
+	}
+
+	// The diff should only show the actual content change, not key reordering.
+	// Count changed lines (starting with + or - but not --- or +++)
+	lines := strings.Split(diff, "\n")
+	changed := 0
+	for _, line := range lines {
+		if (strings.HasPrefix(line, "+") || strings.HasPrefix(line, "-")) &&
+			!strings.HasPrefix(line, "---") && !strings.HasPrefix(line, "+++") {
+			changed++
+		}
+	}
+	// Should be a small diff (the one added line + one removed line), not 30+ lines
+	if changed > 6 {
+		t.Errorf("diff has too many changed lines (%d), key reordering not normalized:\n%s", changed, diff)
+	}
+}
+
 func TestRenderPlanNil(t *testing.T) {
-	out := RenderPlan(nil)
+	out := RenderPlan(nil, nil)
 	if !strings.Contains(out, "No plan") {
 		t.Errorf("expected 'No plan' message, got %q", out)
 	}
