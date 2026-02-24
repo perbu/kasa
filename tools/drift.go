@@ -246,7 +246,6 @@ func CompareManifest(ctx context.Context, dynClient dynamic.Interface, namespace
 			resourceName = metaName
 		}
 	}
-	result.Name = resourceName
 
 	// Extract apiVersion from stored manifest for GVR resolution
 	apiVersion, _ := storedMap["apiVersion"].(string)
