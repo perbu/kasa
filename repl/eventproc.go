@@ -26,7 +26,7 @@ func ProcessEventParts(parts []*genai.Part) *EventResult {
 		if part.FunctionCall != nil {
 			if part.FunctionCall.Name == "propose_plan" && part.FunctionCall.Args != nil {
 				plan := ParsePlanFromResponse(part.FunctionCall.Args)
-				if plan != nil {
+				if plan != nil && plan.IsValid() {
 					result.Plan = plan
 				}
 			}

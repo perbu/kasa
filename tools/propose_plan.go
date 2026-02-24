@@ -1,6 +1,9 @@
 package tools
 
 import (
+	"fmt"
+	"strings"
+
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/tool"
 	"google.golang.org/genai"
@@ -103,11 +106,18 @@ func (t *ProposePlanTool) Run(ctx tool.Context, args any) (map[string]any, error
 		if !ok {
 			return errorResult("invalid action format")
 		}
-		if _, ok := actionMap["tool"].(string); !ok {
-			return map[string]any{"error": "action missing tool name", "index": i}, nil
+		var missing []string
+		if v, _ := actionMap["tool"].(string); v == "" {
+			missing = append(missing, "tool")
 		}
-		if _, ok := actionMap["reason"].(string); !ok {
-			return map[string]any{"error": "action missing reason", "index": i}, nil
+		if v, _ := actionMap["reason"].(string); v == "" {
+			missing = append(missing, "reason")
+		}
+		if len(missing) > 0 {
+			return map[string]any{
+				"error": "action at index " + fmt.Sprintf("%d", i) + " is missing required fields: " + strings.Join(missing, ", ") + ". Each action must have: tool (the tool name to call, e.g. \"apply_resource\"), parameters (map of args), reason (why this action is needed).",
+				"index": i,
+			}, nil
 		}
 	}
 

@@ -217,8 +217,16 @@ func (t *ApplyResourceTool) Run(ctx tool.Context, args any) (map[string]any, err
 		result["message"] = fmt.Sprintf("%s %s/%s", actionTitle, gvk.Kind, name)
 
 		// Save manifest to git storage (only on actual apply, not dry run)
-		if t.manifest != nil && namespaced {
-			manifestPath, saveErr := t.manifest.SaveManifest(namespace, appName, resourceType, []byte(yamlContent))
+		if t.manifest != nil {
+			manifestNamespace := namespace
+			if !namespaced {
+				if resourceType == "namespace" {
+					manifestNamespace = name
+				} else {
+					manifestNamespace = "_cluster"
+				}
+			}
+			manifestPath, saveErr := t.manifest.SaveManifest(manifestNamespace, appName, resourceType, []byte(yamlContent))
 			if saveErr != nil {
 				result["manifest_warning"] = fmt.Sprintf("Applied to cluster but failed to save manifest: %v", saveErr)
 			} else {

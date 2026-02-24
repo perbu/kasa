@@ -64,13 +64,20 @@ func (t *ListHelmReleasesTool) Run(ctx tool.Context, args any) (map[string]any, 
 	defer cancel()
 
 	secrets, err := t.clientset.CoreV1().Secrets(namespace).List(timeoutCtx, metav1.ListOptions{
-		LabelSelector: "owner=helm,status=deployed",
+		LabelSelector: "owner=helm",
 	})
 	if err != nil {
 		return errorResult(fmt.Sprintf("failed to list Helm secrets: %v", err))
 	}
 
-	releases := make([]map[string]any, 0, len(secrets.Items))
+	// Decode all release secrets and keep only the highest revision per release.
+	// Helm writes a new secret per revision, so filtering only on owner=helm returns all history.
+	type releaseEntry struct {
+		data     map[string]any
+		revision int
+	}
+	byRelease := make(map[string]releaseEntry)
+
 	for _, secret := range secrets.Items {
 		releaseData, ok := secret.Data["release"]
 		if !ok {
@@ -82,16 +89,28 @@ func (t *ListHelmReleasesTool) Run(ctx tool.Context, args any) (map[string]any, 
 			continue
 		}
 
-		releases = append(releases, map[string]any{
-			"name":          rel.Name,
-			"namespace":     rel.Namespace,
-			"chart":         rel.Chart.Metadata.Name,
-			"chart_version": rel.Chart.Metadata.Version,
-			"app_version":   rel.Chart.Metadata.AppVersion,
-			"status":        rel.Info.Status,
-			"revision":      rel.Version,
-			"updated":       rel.Info.LastDeployed,
-		})
+		key := rel.Namespace + "/" + rel.Name
+		existing, seen := byRelease[key]
+		if !seen || rel.Version > existing.revision {
+			byRelease[key] = releaseEntry{
+				revision: rel.Version,
+				data: map[string]any{
+					"name":          rel.Name,
+					"namespace":     rel.Namespace,
+					"chart":         rel.Chart.Metadata.Name,
+					"chart_version": rel.Chart.Metadata.Version,
+					"app_version":   rel.Chart.Metadata.AppVersion,
+					"status":        rel.Info.Status,
+					"revision":      rel.Version,
+					"updated":       rel.Info.LastDeployed,
+				},
+			}
+		}
+	}
+
+	releases := make([]map[string]any, 0, len(byRelease))
+	for _, entry := range byRelease {
+		releases = append(releases, entry.data)
 	}
 
 	result := map[string]any{

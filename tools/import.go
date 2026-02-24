@@ -82,7 +82,7 @@ func (t *ImportResourceTool) Declaration() *genai.FunctionDeclaration {
 					Description: "If true, overwrite an existing manifest. Default is false.",
 				},
 			},
-			Required: []string{"namespace", "name", "kind"},
+			Required: []string{"name", "kind"},
 		},
 	}
 }
@@ -95,10 +95,7 @@ func (t *ImportResourceTool) Run(ctx tool.Context, args any) (map[string]any, er
 		return errorResult(err.Error())
 	}
 
-	namespace, ok := argsMap["namespace"].(string)
-	if !ok || namespace == "" {
-		return errorResult("namespace is required")
-	}
+	namespace, _ := argsMap["namespace"].(string)
 
 	name, ok := argsMap["name"].(string)
 	if !ok || name == "" {
@@ -126,8 +123,20 @@ func (t *ImportResourceTool) Run(ctx tool.Context, args any) (map[string]any, er
 		return errorResult(fmt.Sprintf("unsupported resource kind: %s. Provide api_version for custom resources.", kind))
 	}
 
+	namespaced := IsNamespaced(resourceType)
+	manifestNamespace := namespace
+	if !namespaced {
+		if resourceType == "namespace" {
+			// Namespace resources are stored under their own name, not _cluster,
+			// since the manifest directory structure is namespace-based.
+			manifestNamespace = name
+		} else {
+			manifestNamespace = "_cluster"
+		}
+	}
+
 	// Check if manifest already exists
-	if !overwrite && t.manifest.ManifestExists(namespace, name, resourceType) {
+	if !overwrite && t.manifest.ManifestExists(manifestNamespace, name, resourceType) {
 		return map[string]any{
 			"exists":  true,
 			"message": "Manifest already exists. Call with overwrite=true to replace.",
@@ -144,7 +153,6 @@ func (t *ImportResourceTool) Run(ctx tool.Context, args any) (map[string]any, er
 		return errorResult(fmt.Sprintf("unknown resource kind '%s'. Provide api_version for custom resources", kind))
 	}
 
-	namespaced := IsNamespaced(resourceType)
 	resourceClient := namespacedClient(t.dynamicClient, gvr, namespace, namespaced)
 
 	obj, getErr := resourceClient.Get(timeoutCtx, name, metav1.GetOptions{})
@@ -164,7 +172,7 @@ func (t *ImportResourceTool) Run(ctx tool.Context, args any) (map[string]any, er
 	}
 
 	// Save manifest
-	manifestPath, saveErr := t.manifest.SaveManifest(namespace, name, resourceType, yamlBytes)
+	manifestPath, saveErr := t.manifest.SaveManifest(manifestNamespace, name, resourceType, yamlBytes)
 	if saveErr != nil {
 		return errorResult(fmt.Sprintf("failed to save manifest: %v", saveErr))
 	}

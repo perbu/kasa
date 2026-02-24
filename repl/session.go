@@ -23,6 +23,19 @@ type Plan struct {
 	Actions     []PlannedAction `json:"actions"`
 }
 
+// IsValid returns true if the plan has a description and all actions have a tool name.
+func (p *Plan) IsValid() bool {
+	if p.Description == "" || len(p.Actions) == 0 {
+		return false
+	}
+	for _, a := range p.Actions {
+		if a.Tool == "" {
+			return false
+		}
+	}
+	return true
+}
+
 // ClarificationQuestion represents a single question in a clarification request.
 type ClarificationQuestion struct {
 	Question string   `json:"question"`
