@@ -150,7 +150,7 @@ func (r *REPL) runAgentSync(ctx context.Context, state *SessionState, prompt str
 	status := NewStatusLine()
 	status.Start()
 
-	for event, err := range r.runner.Run(ctx, "user1", "session1", userMessage, agent.RunConfig{}) {
+	for event, err := range r.runner.Run(ctx, "user1", "session1", userMessage, agent.RunConfig{StreamingMode: agent.StreamingModeSSE}) {
 		if err != nil {
 			status.Stop()
 			return fmt.Errorf("agent execution failed: %w", err)

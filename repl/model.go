@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
@@ -90,6 +91,10 @@ type model struct {
 	outputTokens      int32
 	totalInputTokens  int32 // cumulative input tokens across the session
 	totalOutputTokens int32 // cumulative output tokens across the session
+
+	// streaming state
+	streamTokens    int       // count of partial text chunks (≈ tokens)
+	streamStartTime time.Time // when first partial text chunk arrived
 
 	// terminal dimensions
 	width  int
@@ -648,6 +653,8 @@ func (m *model) startAgent(prompt string) tea.Cmd {
 	}
 	m.inputTokens = 0
 	m.outputTokens = 0
+	m.streamTokens = 0
+	m.streamStartTime = time.Time{}
 	m.textarea.Blur()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -663,7 +670,7 @@ func (m *model) startAgent(prompt string) tea.Cmd {
 		}()
 
 		userMessage := genai.NewContentFromText(prompt, genai.RoleUser)
-		for event, err := range m.runner.Run(ctx, "user1", m.sessionID, userMessage, agent.RunConfig{}) {
+		for event, err := range m.runner.Run(ctx, "user1", m.sessionID, userMessage, agent.RunConfig{StreamingMode: agent.StreamingModeSSE}) {
 			if err != nil {
 				ch <- agentEventMsg{err: err}
 				return
@@ -815,6 +822,8 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 			m.toolName = ""
 			m.toolReason = ""
 			m.statusText = "Thinking..."
+			m.streamTokens = 0
+			m.streamStartTime = time.Time{}
 
 			// Drain direct output from tools (e.g., secret values)
 			if m.directIO != nil {
@@ -825,9 +834,23 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		for _, text := range ev.TextParts {
-			rendered := m.renderMarkdown(text)
-			cmds = append(cmds, tea.Println(rendered))
+		// Partial events are streaming chunks — update status but skip
+		// printing text (the final non-partial event has the full content).
+		if event.Partial {
+			if len(ev.TextParts) > 0 {
+				m.streamTokens += len(ev.TextParts)
+				if m.streamStartTime.IsZero() {
+					m.streamStartTime = time.Now()
+				}
+				m.statusText = m.streamStatus()
+				m.toolName = ""
+				m.toolReason = ""
+			}
+		} else {
+			for _, text := range ev.TextParts {
+				rendered := m.renderMarkdown(text)
+				cmds = append(cmds, tea.Println(rendered))
+			}
 		}
 	}
 
@@ -1242,6 +1265,15 @@ func (m *model) buildStatusLine() string {
 	return status
 }
 
+// streamStatus returns a status string like "Streaming 42 tok (15.2 tok/s)".
+func (m *model) streamStatus() string {
+	elapsed := time.Since(m.streamStartTime).Seconds()
+	if elapsed < 0.1 {
+		return fmt.Sprintf("Streaming %d tok", m.streamTokens)
+	}
+	rate := float64(m.streamTokens) / elapsed
+	return fmt.Sprintf("Streaming %d tok (%.0f tok/s)", m.streamTokens, rate)
+}
 
 // divider styles
 var (
