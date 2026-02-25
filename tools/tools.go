@@ -39,12 +39,13 @@ type KubeTools struct {
 	manifest      *manifest.Manager
 	jinaAPIKey    string
 	counter       *ToolCallCounter
+	directIO      *DirectIO
 }
 
 // NewKubeTools creates a new KubeTools instance with the given clientset, dynamic client, manifest manager, and Jina API key.
 // The warnThreshold controls how many calls to the same tool before a warning is
 // injected into the response. Pass 0 to disable per-tool warnings.
-func NewKubeTools(clientset *kubernetes.Clientset, dynamicClient dynamic.Interface, manifest *manifest.Manager, jinaAPIKey string, warnThreshold int) *KubeTools {
+func NewKubeTools(clientset *kubernetes.Clientset, dynamicClient dynamic.Interface, manifest *manifest.Manager, jinaAPIKey string, warnThreshold int, directIO *DirectIO) *KubeTools {
 	// Install discovery-backed resolver for dynamic CRD resolution.
 	SetResolver(NewResourceResolver(clientset.Discovery()))
 
@@ -54,7 +55,13 @@ func NewKubeTools(clientset *kubernetes.Clientset, dynamicClient dynamic.Interfa
 		manifest:      manifest,
 		jinaAPIKey:    jinaAPIKey,
 		counter:       NewToolCallCounter(warnThreshold),
+		directIO:      directIO,
 	}
+}
+
+// DirectIO returns the DirectIO instance for side-channel communication.
+func (k *KubeTools) DirectIO() *DirectIO {
+	return k.directIO
 }
 
 // Counter returns the shared tool call counter so the REPL can reset it between turns.
@@ -102,6 +109,9 @@ func (k *KubeTools) All() []tool.Tool {
 		NewListHelmReleasesTool(k.clientset),
 		NewGetHelmReleaseTool(k.clientset),
 		NewGetHelmValuesTool(k.clientset),
+		// Secret tools (side-channel: values bypass the LLM)
+		NewCreateSecretTool(k.clientset, k.directIO),
+		NewShowSecretTool(k.clientset, k.directIO),
 	}
 
 	wrapped := make([]tool.Tool, len(raw))

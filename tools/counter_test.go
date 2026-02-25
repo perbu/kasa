@@ -44,7 +44,7 @@ func TestToolCallCounter(t *testing.T) {
 
 func TestAllToolsWrapped(t *testing.T) {
 	mgr := newTestManifestManager(t)
-	kt := NewKubeTools(clientset, dynamicClient, mgr, "", 3)
+	kt := NewKubeTools(clientset, dynamicClient, mgr, "", 3, NewDirectIO())
 
 	for _, tool := range kt.All() {
 		ct, ok := tool.(*countingTool)
@@ -60,7 +60,7 @@ func TestAllToolsWrapped(t *testing.T) {
 
 func TestCountingToolInjectsWarning(t *testing.T) {
 	mgr := newTestManifestManager(t)
-	kt := NewKubeTools(clientset, dynamicClient, mgr, "", 3)
+	kt := NewKubeTools(clientset, dynamicClient, mgr, "", 3, NewDirectIO())
 
 	// Find list_namespaces tool
 	var nsTool *countingTool
@@ -103,7 +103,7 @@ func mapKeys(m map[string]any) []string {
 
 func TestCountingToolRegistersItselfInReqTools(t *testing.T) {
 	mgr := newTestManifestManager(t)
-	kt := NewKubeTools(clientset, dynamicClient, mgr, "", 3)
+	kt := NewKubeTools(clientset, dynamicClient, mgr, "", 3, NewDirectIO())
 
 	for _, tl := range kt.All() {
 		ct, ok := tl.(*countingTool)

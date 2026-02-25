@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/glamour"
 	"golang.org/x/term"
 	"github.com/perbu/kasa/manifest"
+	"github.com/perbu/kasa/tools"
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
@@ -38,6 +39,7 @@ type ContextSwitchResult struct {
 	Manifest        *manifest.Manager
 	ContextName     string
 	ResourceFetcher ResourceFetcher
+	DirectIO        *tools.DirectIO
 }
 
 // ContextSwitchFunc rebuilds the entire agent stack for a new context.
@@ -63,10 +65,11 @@ type REPL struct {
 	listContexts     ContextListFunc
 	switchContext    ContextSwitchFunc
 	resourceFetcher  ResourceFetcher
+	directIO         *tools.DirectIO
 }
 
 // New creates a new REPL instance.
-func New(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, listContexts ContextListFunc, switchContext ContextSwitchFunc, resourceFetcher ResourceFetcher) *REPL {
+func New(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, listContexts ContextListFunc, switchContext ContextSwitchFunc, resourceFetcher ResourceFetcher, directIO *tools.DirectIO) *REPL {
 	return &REPL{
 		runner:           r,
 		sessionService:   ss,
@@ -80,6 +83,7 @@ func New(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Ma
 		listContexts:     listContexts,
 		switchContext:    switchContext,
 		resourceFetcher:  resourceFetcher,
+		directIO:         directIO,
 	}
 }
 
@@ -91,15 +95,41 @@ func (r *REPL) Run(ctx context.Context) error {
 	// late end up in stdin and get interpreted as user input by bubbletea.
 	drainStdin()
 
-	m := newModel(r.runner, r.sessionService, r.debug, r.manifest, r.apiKey, r.baseURL, r.modelName, r.maxToolCalls, r.toolCallResetter, r.listContexts, r.switchContext, r.resourceFetcher)
+	m := newModel(r.runner, r.sessionService, r.debug, r.manifest, r.apiKey, r.baseURL, r.modelName, r.maxToolCalls, r.toolCallResetter, r.listContexts, r.switchContext, r.resourceFetcher, r.directIO)
 	p := tea.NewProgram(m, tea.WithContext(ctx))
 	_, err := p.Run()
 	return err
 }
 
 // RunSinglePrompt runs the agent with a single prompt (non-interactive mode).
+// In non-interactive mode, secret input uses terminal password prompt and
+// direct output goes straight to stdout.
 func (r *REPL) RunSinglePrompt(ctx context.Context, prompt string) error {
+	// Handle secret input requests in non-interactive mode
+	if r.directIO != nil {
+		go r.handleNonInteractiveSecretInput()
+	}
 	return r.runAgentSync(ctx, nil, prompt)
+}
+
+// handleNonInteractiveSecretInput reads from DirectIO.InputCh and prompts
+// for passwords using term.ReadPassword when running without the REPL.
+func (r *REPL) handleNonInteractiveSecretInput() {
+	for req := range r.directIO.InputCh {
+		fmt.Print(req.Prompt)
+		fd := int(os.Stdin.Fd())
+		if term.IsTerminal(fd) {
+			password, err := term.ReadPassword(fd)
+			fmt.Println() // newline after masked input
+			if err != nil {
+				req.ResultCh <- ""
+			} else {
+				req.ResultCh <- string(password)
+			}
+		} else {
+			req.ResultCh <- ""
+		}
+	}
 }
 
 // runAgentSync runs the agent synchronously with the given prompt.
@@ -136,6 +166,14 @@ func (r *REPL) runAgentSync(ctx context.Context, state *SessionState, prompt str
 				}
 				if ev.Clarification != nil {
 					state.PendingClarification = ev.Clarification
+				}
+			}
+
+			// Drain direct output (secret values displayed to user)
+			if r.directIO != nil && len(ev.ToolResponses) > 0 {
+				for _, line := range r.directIO.Drain() {
+					status.ClearForOutput()
+					fmt.Println(renderDirectOutput(line, 80))
 				}
 			}
 

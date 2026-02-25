@@ -10,11 +10,13 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/perbu/kasa/manifest"
+	"github.com/perbu/kasa/tools"
 	openai "github.com/sashabaranov/go-openai"
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/runner"
@@ -42,6 +44,16 @@ type contextSwitchMsg struct {
 
 // planRenderedMsg carries a fully rendered plan string from an async computation.
 type planRenderedMsg struct{ text string }
+
+// secretInputRequestMsg wraps a SecretInputRequest from a tool that needs user input.
+type secretInputRequestMsg struct {
+	req tools.SecretInputRequest
+}
+
+// directOutputMsg carries a line of direct output to display to the user.
+type directOutputMsg struct {
+	lines []string
+}
 
 // model is the bubbletea Model for the interactive REPL.
 type model struct {
@@ -99,6 +111,12 @@ type model struct {
 
 	resourceFetcher ResourceFetcher
 
+	// direct IO for secret tools
+	directIO           *tools.DirectIO
+	secretInputActive  bool
+	secretInput        textinput.Model
+	secretInputRequest *tools.SecretInputRequest
+
 	quitting bool
 }
 
@@ -117,7 +135,7 @@ var debugStyle = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("8"))
 // toolCallStyle is the dim style for persistent tool call log lines.
 var toolCallStyle = lipgloss.NewStyle().Faint(true)
 
-func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, listContexts ContextListFunc, switchContext ContextSwitchFunc, resourceFetcher ResourceFetcher) model {
+func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, listContexts ContextListFunc, switchContext ContextSwitchFunc, resourceFetcher ResourceFetcher, directIO *tools.DirectIO) model {
 	ta := textarea.New()
 	ta.Placeholder = "Type a message..."
 	ta.SetPromptFunc(2, func(line int) string {
@@ -159,6 +177,11 @@ func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manife
 		glamour.WithWordWrap(80),
 	)
 
+	// Secret input widget (masked)
+	si := textinput.New()
+	si.EchoMode = textinput.EchoPassword
+	si.EchoCharacter = '*'
+
 	return model{
 		textarea:       ta,
 		spinner:        s,
@@ -180,6 +203,8 @@ func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manife
 		listContexts:    listContexts,
 		switchContext:   switchContext,
 		resourceFetcher: resourceFetcher,
+		directIO:        directIO,
+		secretInput:     si,
 	}
 }
 
@@ -224,6 +249,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		// Ctrl+C: cancel agent, dismiss modal, or quit
 		if msg.String() == "ctrl+c" {
+			if m.secretInputActive {
+				return m.handleSecretInputCancel()
+			}
 			if m.showContextSelect {
 				return m.handleContextCancel()
 			}
@@ -238,6 +266,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			m.history.Save()
 			return m, tea.Quit
+		}
+
+		// Delegate to secret input modal when active
+		if m.secretInputActive {
+			return m.handleSecretInputKey(msg)
 		}
 
 		// Delegate to context selector modal when active
@@ -327,6 +360,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case planRenderedMsg:
 		return m, tea.Println(msg.text)
+
+	case secretInputRequestMsg:
+		return m.handleSecretInputRequest(msg)
+
+	case directOutputMsg:
+		var cmds []tea.Cmd
+		for _, line := range msg.lines {
+			cmds = append(cmds, tea.Println(line))
+		}
+		return m, tea.Batch(cmds...)
 	}
 
 	return m, nil
@@ -335,6 +378,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	if m.quitting {
 		return ""
+	}
+
+	// Show secret input prompt
+	if m.secretInputActive {
+		var sb strings.Builder
+		if m.secretInputRequest != nil {
+			sb.WriteString(m.secretInputRequest.Prompt)
+		}
+		sb.WriteString(m.secretInput.View())
+		sb.WriteString("\n")
+		return sb.String()
 	}
 
 	// Show context selector modal instead of normal UI
@@ -593,13 +647,28 @@ func (m *model) startAgent(prompt string) tea.Cmd {
 		}
 	}()
 
-	return tea.Batch(waitForAgent(ch), m.spinner.Tick)
+	cmds := []tea.Cmd{waitForAgent(ch), m.spinner.Tick}
+	if m.directIO != nil {
+		cmds = append(cmds, waitForSecretInput(m.directIO.InputCh))
+	}
+	return tea.Batch(cmds...)
 }
 
 // waitForAgent returns a Cmd that reads one event from the channel.
 func waitForAgent(ch chan agentEventMsg) tea.Cmd {
 	return func() tea.Msg {
 		return <-ch
+	}
+}
+
+// waitForSecretInput returns a Cmd that waits for a secret input request from a tool.
+func waitForSecretInput(ch chan tools.SecretInputRequest) tea.Cmd {
+	return func() tea.Msg {
+		req, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return secretInputRequestMsg{req: req}
 	}
 }
 
@@ -721,6 +790,14 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 			m.toolName = ""
 			m.toolReason = ""
 			m.statusText = "Thinking..."
+
+			// Drain direct output from tools (e.g., secret values)
+			if m.directIO != nil {
+				for _, line := range m.directIO.Drain() {
+					rendered := renderDirectOutput(line, m.width)
+					cmds = append(cmds, tea.Println(rendered))
+				}
+			}
 		}
 
 		for _, text := range ev.TextParts {
@@ -756,6 +833,69 @@ func (m model) handleClarificationCancel() (tea.Model, tea.Cmd) {
 	cmds := []tea.Cmd{
 		m.textarea.Focus(),
 		tea.Println("Clarification cancelled."),
+	}
+	return m, tea.Batch(cmds...)
+}
+
+// handleSecretInputRequest shows the masked input field for a secret value.
+func (m model) handleSecretInputRequest(msg secretInputRequestMsg) (tea.Model, tea.Cmd) {
+	m.secretInputActive = true
+	req := msg.req
+	m.secretInputRequest = &req
+	m.secretInput.Reset()
+	m.secretInput.Placeholder = ""
+	m.secretInput.Focus()
+	return m, m.secretInput.Cursor.BlinkCmd()
+}
+
+// handleSecretInputKey processes key events while the secret input is active.
+func (m model) handleSecretInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		value := m.secretInput.Value()
+		m.secretInputActive = false
+		req := m.secretInputRequest
+		m.secretInputRequest = nil
+		m.secretInput.Reset()
+
+		// Send the value back to the waiting tool
+		if req != nil {
+			req.ResultCh <- value
+		}
+
+		// Restart the secret input listener
+		var cmds []tea.Cmd
+		if m.directIO != nil {
+			cmds = append(cmds, waitForSecretInput(m.directIO.InputCh))
+		}
+		return m, tea.Batch(cmds...)
+
+	case "esc":
+		return m.handleSecretInputCancel()
+
+	default:
+		var cmd tea.Cmd
+		m.secretInput, cmd = m.secretInput.Update(msg)
+		return m, cmd
+	}
+}
+
+// handleSecretInputCancel dismisses the secret input and sends an empty value.
+func (m model) handleSecretInputCancel() (tea.Model, tea.Cmd) {
+	m.secretInputActive = false
+	req := m.secretInputRequest
+	m.secretInputRequest = nil
+	m.secretInput.Reset()
+
+	// Send empty value to unblock the waiting tool
+	if req != nil {
+		req.ResultCh <- ""
+	}
+
+	var cmds []tea.Cmd
+	cmds = append(cmds, tea.Println("Secret input cancelled."))
+	if m.directIO != nil {
+		cmds = append(cmds, waitForSecretInput(m.directIO.InputCh))
 	}
 	return m, tea.Batch(cmds...)
 }
@@ -804,6 +944,9 @@ func (m model) handleContextSwitch(msg contextSwitchMsg) (tea.Model, tea.Cmd) {
 	m.sessionService = msg.result.SessionService
 	m.manifest = msg.result.Manifest
 	m.resourceFetcher = msg.result.ResourceFetcher
+	if msg.result.DirectIO != nil {
+		m.directIO = msg.result.DirectIO
+	}
 
 	// Reset session (same as /clear).
 	ctx := context.Background()
@@ -1229,6 +1372,33 @@ func formatToolArgs(args map[string]any) string {
 		parts = append(parts, fmt.Sprintf("%s=%s", k, v))
 	}
 	return strings.Join(parts, ", ")
+}
+
+// directOutputStyle wraps direct-to-user output (secrets, etc.) in a bordered
+// box so it's visually distinct from LLM-generated text.
+var (
+	directOutputBorderStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("10")). // green
+				Padding(0, 2)
+
+	directOutputTitleStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("10"))
+)
+
+// renderDirectOutput wraps tool-to-user text in a styled box.
+func renderDirectOutput(text string, width int) string {
+	var sb strings.Builder
+	sb.WriteString(directOutputTitleStyle.Render("Direct Output"))
+	sb.WriteString("\n")
+	sb.WriteString(strings.TrimSpace(text))
+
+	boxWidth := max(width-4, 40)
+	if boxWidth > 80 {
+		boxWidth = 80
+	}
+	return directOutputBorderStyle.Width(boxWidth).Render(sb.String())
 }
 
 // truncateToWidth truncates a string to fit within the given terminal width.

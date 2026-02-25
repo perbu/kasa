@@ -81,8 +81,11 @@ func main() {
 	// Get API key for web tools (optional)
 	jinaAPIKey := cfg.JinaAPIKey()
 
+	// Initialize DirectIO for secret tool side-channel communication
+	directIO := tools.NewDirectIO()
+
 	// Initialize tools
-	kubeTools := tools.NewKubeTools(clientset, dynamicClient, manifestMgr, jinaAPIKey, cfg.Agent.ToolWarnThreshold)
+	kubeTools := tools.NewKubeTools(clientset, dynamicClient, manifestMgr, jinaAPIKey, cfg.Agent.ToolWarnThreshold, directIO)
 
 	// Get API key
 	apiKey := cfg.APIKey()
@@ -247,9 +250,10 @@ func main() {
 			_ = newManifest.Pull() // best-effort
 		}
 
-		// 3. New tools.
+		// 3. New tools (with fresh DirectIO).
+		newDirectIO := tools.NewDirectIO()
 		newJinaKey := cfg.JinaAPIKey()
-		newKubeTools := tools.NewKubeTools(newClientset, newDynamic, newManifest, newJinaKey, cfg.Agent.ToolWarnThreshold)
+		newKubeTools := tools.NewKubeTools(newClientset, newDynamic, newManifest, newJinaKey, cfg.Agent.ToolWarnThreshold, newDirectIO)
 		newToolDocs := newKubeTools.GenerateToolDocs()
 		newSysPrompt := strings.Replace(cfg.Prompts.System, "{{TOOL_DOCS}}", newToolDocs, 1)
 
@@ -297,11 +301,12 @@ func main() {
 			Manifest:        newManifest,
 			ContextName:     resolvedCtx,
 			ResourceFetcher: makeResourceFetcher(newDynamic),
+			DirectIO:        newDirectIO,
 		}, nil
 	}
 
 	// Create REPL instance
-	replInstance := repl.New(r, sessionService, *debug, manifestMgr, apiKey, cfg.BaseURL(), cfg.Agent.Model, cfg.Agent.MaxToolCalls, kubeTools.Counter(), listContextsFn, switchContextFn, makeResourceFetcher(dynamicClient))
+	replInstance := repl.New(r, sessionService, *debug, manifestMgr, apiKey, cfg.BaseURL(), cfg.Agent.Model, cfg.Agent.MaxToolCalls, kubeTools.Counter(), listContextsFn, switchContextFn, makeResourceFetcher(dynamicClient), directIO)
 
 	// Non-interactive mode (no approval workflow - runs directly)
 	if !isInteractive {
