@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // contextSelectedMsg is sent when the user picks a context from the modal.
@@ -42,7 +42,7 @@ func newContextSelectorModal(contexts []ContextInfo, width int) contextSelectorM
 // Update handles key messages for the context selector modal.
 func (m contextSelectorModal) Update(msg tea.Msg) (contextSelectorModal, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "esc":
 			return m, func() tea.Msg { return contextCancelMsg{} }

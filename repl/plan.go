@@ -88,7 +88,7 @@ func buildPlanMarkdown(plan *Plan, diffs map[int]string) string {
 	}
 
 	md.WriteString("---\n\n")
-	md.WriteString("**Commands:** `/approve` approve · `/abort` reject · `/plan` show again\n")
+	md.WriteString("**Commands:** `/approve` approve · `/abort` reject · `/plan` show again · `/copy` copy YAML\n")
 	return md.String()
 }
 

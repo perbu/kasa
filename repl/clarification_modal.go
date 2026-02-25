@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // clarificationAnswerMsg is sent when the user submits answers via the modal.
@@ -39,7 +39,7 @@ func newClarificationModal(c *Clarification, width int) clarificationModal {
 			ti := textinput.New()
 			ti.Placeholder = "Type your answer..."
 			ti.CharLimit = 256
-			ti.Width = 50
+			ti.SetWidth(50)
 			textInputs[i] = ti
 		}
 	}
@@ -207,7 +207,7 @@ func (m *clarificationModal) blurAllTextInputs() {
 // Update handles key messages for the modal.
 func (m clarificationModal) Update(msg tea.Msg) (clarificationModal, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "esc":
 			return m, func() tea.Msg {

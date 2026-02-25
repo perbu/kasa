@@ -5,9 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"syscall"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/glamour"
 	"golang.org/x/term"
 	"github.com/perbu/kasa/manifest"
@@ -66,10 +65,11 @@ type REPL struct {
 	switchContext    ContextSwitchFunc
 	resourceFetcher  ResourceFetcher
 	directIO         *tools.DirectIO
+	contextName      string
 }
 
 // New creates a new REPL instance.
-func New(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, listContexts ContextListFunc, switchContext ContextSwitchFunc, resourceFetcher ResourceFetcher, directIO *tools.DirectIO) *REPL {
+func New(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, listContexts ContextListFunc, switchContext ContextSwitchFunc, resourceFetcher ResourceFetcher, directIO *tools.DirectIO, contextName string) *REPL {
 	return &REPL{
 		runner:           r,
 		sessionService:   ss,
@@ -84,18 +84,13 @@ func New(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Ma
 		switchContext:    switchContext,
 		resourceFetcher:  resourceFetcher,
 		directIO:         directIO,
+		contextName:      contextName,
 	}
 }
 
 // Run starts the interactive REPL loop using bubbletea.
 func (r *REPL) Run(ctx context.Context) error {
-	// Drain any stale terminal query responses (OSC, CPR) from stdin.
-	// Libraries like termenv/lipgloss/glamour query the terminal for
-	// background color and capabilities during init. Responses that arrive
-	// late end up in stdin and get interpreted as user input by bubbletea.
-	drainStdin()
-
-	m := newModel(r.runner, r.sessionService, r.debug, r.manifest, r.apiKey, r.baseURL, r.modelName, r.maxToolCalls, r.toolCallResetter, r.listContexts, r.switchContext, r.resourceFetcher, r.directIO)
+	m := newModel(r.runner, r.sessionService, r.debug, r.manifest, r.apiKey, r.baseURL, r.modelName, r.maxToolCalls, r.toolCallResetter, r.listContexts, r.switchContext, r.resourceFetcher, r.directIO, r.contextName)
 	p := tea.NewProgram(m, tea.WithContext(ctx))
 	_, err := p.Run()
 	return err
@@ -234,7 +229,7 @@ func (r *REPL) PrintWelcome(version, model string, toolCount int, deploymentsDir
 | Clusters | %s |
 | Deployments | %s |
 
-Commands: **/approve** **/abort** plans · **/commit** **/push** **/status** manifests · **/contexts** **/context** cluster · **/debug** **/dump** **/clear** · **exit**
+Commands: **/approve** **/abort** **/copy** plans · **/commit** **/push** **/status** manifests · **/contexts** **/context** cluster · **/debug** **/dump** **/clear** · **exit**
 `, model, toolCount, contextDisplay, deploymentsDir)
 
 	renderer, err := setupMarkdownRenderer()
@@ -296,7 +291,7 @@ func setupMarkdownRenderer() (*glamour.TermRenderer, error) {
 	}
 
 	return glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
+		glamour.WithStandardStyle("dark"),
 		glamour.WithWordWrap(width),
 	)
 }
@@ -318,33 +313,3 @@ func renderMarkdownSimple(md string) string {
 	return out
 }
 
-// drainStdin discards any bytes sitting in the terminal input buffer.
-// This prevents stale escape sequence responses (from terminal color/capability
-// queries) from being interpreted as user input by bubbletea.
-func drainStdin() {
-	fd := int(os.Stdin.Fd())
-	if !term.IsTerminal(fd) {
-		return
-	}
-
-	// Enter raw mode so escape sequences (which lack newlines) become readable.
-	oldState, err := term.MakeRaw(fd)
-	if err != nil {
-		return
-	}
-	defer term.Restore(fd, oldState)
-
-	// Set non-blocking so we only read what's already buffered.
-	if err := syscall.SetNonblock(fd, true); err != nil {
-		return
-	}
-	defer syscall.SetNonblock(fd, false)
-
-	buf := make([]byte, 256)
-	for {
-		n, _ := syscall.Read(fd, buf)
-		if n <= 0 {
-			break
-		}
-	}
-}

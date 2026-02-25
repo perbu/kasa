@@ -2,21 +2,23 @@ package repl
 
 import (
 	"testing"
-	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/x/exp/teatest"
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestModelCtrlCQuits(t *testing.T) {
-	m := newModel(nil, nil, false, nil, "", "", "", 25, nil, nil, nil, nil, nil)
-	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
+	m := newModel(nil, nil, false, nil, "", "", "", 25, nil, nil, nil, nil, nil, "")
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
-	tm.WaitFinished(t, teatest.WithFinalTimeout(3*time.Second))
+	msg := tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
+	result, cmd := m.Update(msg)
 
-	fm := tm.FinalModel(t).(model)
-	if !fm.quitting {
+	rm := result.(model)
+	if !rm.quitting {
 		t.Error("expected model to be in quitting state after ctrl+c")
+	}
+
+	// Ctrl+C should produce a tea.Quit command
+	if cmd == nil {
+		t.Error("expected a quit command after ctrl+c")
 	}
 }

@@ -306,7 +306,7 @@ func main() {
 	}
 
 	// Create REPL instance
-	replInstance := repl.New(r, sessionService, *debug, manifestMgr, apiKey, cfg.BaseURL(), cfg.Agent.Model, cfg.Agent.MaxToolCalls, kubeTools.Counter(), listContextsFn, switchContextFn, makeResourceFetcher(dynamicClient), directIO)
+	replInstance := repl.New(r, sessionService, *debug, manifestMgr, apiKey, cfg.BaseURL(), cfg.Agent.Model, cfg.Agent.MaxToolCalls, kubeTools.Counter(), listContextsFn, switchContextFn, makeResourceFetcher(dynamicClient), directIO, kubeContext)
 
 	// Non-interactive mode (no approval workflow - runs directly)
 	if !isInteractive {
@@ -455,7 +455,7 @@ func printDriftScanResults(results *tools.DriftScanResults) {
 	}
 
 	renderer, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
+		glamour.WithStandardStyle("dark"),
 		glamour.WithWordWrap(80),
 	)
 	if err != nil {

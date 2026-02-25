@@ -8,12 +8,12 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/perbu/kasa/manifest"
 	"github.com/perbu/kasa/tools"
@@ -110,6 +110,7 @@ type model struct {
 	switchContext     ContextSwitchFunc
 
 	resourceFetcher ResourceFetcher
+	contextName     string // active K8s context for window title
 
 	// direct IO for secret tools
 	directIO           *tools.DirectIO
@@ -135,11 +136,11 @@ var debugStyle = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("8"))
 // toolCallStyle is the dim style for persistent tool call log lines.
 var toolCallStyle = lipgloss.NewStyle().Faint(true)
 
-func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, listContexts ContextListFunc, switchContext ContextSwitchFunc, resourceFetcher ResourceFetcher, directIO *tools.DirectIO) model {
+func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, listContexts ContextListFunc, switchContext ContextSwitchFunc, resourceFetcher ResourceFetcher, directIO *tools.DirectIO, contextName string) model {
 	ta := textarea.New()
 	ta.Placeholder = "Type a message..."
-	ta.SetPromptFunc(2, func(line int) string {
-		if line == 0 {
+	ta.SetPromptFunc(2, func(info textarea.PromptInfo) string {
+		if info.LineNumber == 0 {
 			return "> "
 		}
 		return "  "
@@ -150,14 +151,16 @@ func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manife
 	ta.MaxHeight = 20
 
 	// Clear background colors so the textarea blends with the terminal.
-	ta.FocusedStyle.Base = lipgloss.NewStyle()
-	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
-	ta.FocusedStyle.EndOfBuffer = lipgloss.NewStyle()
-	ta.FocusedStyle.Text = lipgloss.NewStyle()
-	ta.BlurredStyle.Base = lipgloss.NewStyle()
-	ta.BlurredStyle.CursorLine = lipgloss.NewStyle()
-	ta.BlurredStyle.EndOfBuffer = lipgloss.NewStyle()
-	ta.BlurredStyle.Text = lipgloss.NewStyle()
+	styles := ta.Styles()
+	styles.Focused.Base = lipgloss.NewStyle()
+	styles.Focused.CursorLine = lipgloss.NewStyle()
+	styles.Focused.EndOfBuffer = lipgloss.NewStyle()
+	styles.Focused.Text = lipgloss.NewStyle()
+	styles.Blurred.Base = lipgloss.NewStyle()
+	styles.Blurred.CursorLine = lipgloss.NewStyle()
+	styles.Blurred.EndOfBuffer = lipgloss.NewStyle()
+	styles.Blurred.Text = lipgloss.NewStyle()
+	ta.SetStyles(styles)
 
 	// Rebind: Enter no longer inserts newline (we handle it as submit).
 	// Alt+Enter and Ctrl+J insert newlines.
@@ -203,16 +206,14 @@ func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manife
 		listContexts:    listContexts,
 		switchContext:   switchContext,
 		resourceFetcher: resourceFetcher,
+		contextName:     contextName,
 		directIO:        directIO,
 		secretInput:     si,
 	}
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(
-		textarea.Blink, // cursor blink
-		m.spinner.Tick,
-	)
+	return m.spinner.Tick
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -246,7 +247,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		// Ctrl+C: cancel agent, dismiss modal, or quit
 		if msg.String() == "ctrl+c" {
 			if m.secretInputActive {
@@ -375,9 +376,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) View() string {
+func (m model) View() tea.View {
 	if m.quitting {
-		return ""
+		return tea.NewView("")
 	}
 
 	// Show secret input prompt
@@ -388,17 +389,17 @@ func (m model) View() string {
 		}
 		sb.WriteString(m.secretInput.View())
 		sb.WriteString("\n")
-		return sb.String()
+		return tea.NewView(sb.String())
 	}
 
 	// Show context selector modal instead of normal UI
 	if m.showContextSelect {
-		return m.ctxModal.View() + "\n"
+		return tea.NewView(m.ctxModal.View() + "\n")
 	}
 
 	// Show clarification modal instead of normal UI
 	if m.showClarification {
-		return m.clarModal.View() + "\n"
+		return tea.NewView(m.clarModal.View() + "\n")
 	}
 
 	var sb strings.Builder
@@ -430,7 +431,14 @@ func (m model) View() string {
 	// Textarea (input area)
 	sb.WriteString(m.textarea.View())
 
-	return sb.String()
+	v := tea.NewView(sb.String())
+	if m.contextName != "" {
+		v.WindowTitle = "kasa: " + m.contextName
+	}
+	v.Cursor = &tea.Cursor{
+		Shape: tea.CursorBar,
+	}
+	return v
 }
 
 // handleSubmit processes the Enter key press.
@@ -497,6 +505,20 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 		} else {
 			cmds = append(cmds, tea.Println("No pending plan."))
 		}
+		return m, tea.Batch(cmds...)
+
+	case "/copy":
+		if !m.state.HasPendingPlan() {
+			cmds = append(cmds, tea.Println("No pending plan to copy."))
+			return m, tea.Batch(cmds...)
+		}
+		yaml := collectPlanYAML(m.state.PendingPlan)
+		if yaml == "" {
+			cmds = append(cmds, tea.Println("No YAML content in the pending plan."))
+			return m, tea.Batch(cmds...)
+		}
+		cmds = append(cmds, tea.SetClipboard(yaml))
+		cmds = append(cmds, tea.Println("Plan YAML copied to clipboard."))
 		return m, tea.Batch(cmds...)
 
 	case "/commit":
@@ -844,12 +866,11 @@ func (m model) handleSecretInputRequest(msg secretInputRequestMsg) (tea.Model, t
 	m.secretInputRequest = &req
 	m.secretInput.Reset()
 	m.secretInput.Placeholder = ""
-	m.secretInput.Focus()
-	return m, m.secretInput.Cursor.BlinkCmd()
+	return m, m.secretInput.Focus()
 }
 
 // handleSecretInputKey processes key events while the secret input is active.
-func (m model) handleSecretInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m model) handleSecretInputKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
 		value := m.secretInput.Value()
@@ -947,6 +968,7 @@ func (m model) handleContextSwitch(msg contextSwitchMsg) (tea.Model, tea.Cmd) {
 	if msg.result.DirectIO != nil {
 		m.directIO = msg.result.DirectIO
 	}
+	m.contextName = msg.result.ContextName
 
 	// Reset session (same as /clear).
 	ctx := context.Background()
@@ -1399,6 +1421,17 @@ func renderDirectOutput(text string, width int) string {
 		boxWidth = 80
 	}
 	return directOutputBorderStyle.Width(boxWidth).Render(sb.String())
+}
+
+// collectPlanYAML extracts all YAML content from a plan's actions.
+func collectPlanYAML(plan *Plan) string {
+	var parts []string
+	for _, action := range plan.Actions {
+		if yaml, ok := action.Parameters["yaml"].(string); ok && yaml != "" {
+			parts = append(parts, strings.TrimSpace(yaml))
+		}
+	}
+	return strings.Join(parts, "\n---\n")
 }
 
 // truncateToWidth truncates a string to fit within the given terminal width.
