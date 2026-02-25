@@ -194,9 +194,9 @@ func (m *Manager) Commit(message string) error {
 	return nil
 }
 
-// GetStatus returns the git status of the manifest directory.
+// GetStatus returns the git status scoped to the current context subdirectory.
 func (m *Manager) GetStatus() (string, error) {
-	cmd := exec.Command("git", "status", "--short")
+	cmd := exec.Command("git", "status", "--short", "--", m.context+"/")
 	cmd.Dir = m.baseDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -461,7 +461,8 @@ func (m *Manager) Push() error {
 	return nil
 }
 
-// StagedChangeCount returns the number of staged files in the git index.
+// StagedChangeCount returns the number of staged files scoped to the current context.
+// Only files under the context subdirectory are counted.
 // Returns 0 if there are no staged changes or on error.
 func (m *Manager) StagedChangeCount() int {
 	cmd := exec.Command("git", "diff", "--cached", "--name-only")
@@ -474,12 +475,19 @@ func (m *Manager) StagedChangeCount() int {
 	if text == "" {
 		return 0
 	}
-	return len(strings.Split(text, "\n"))
+	prefix := m.context + "/"
+	count := 0
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			count++
+		}
+	}
+	return count
 }
 
-// StagedDiff returns the full diff of staged changes.
+// StagedDiff returns the full diff of staged changes scoped to the current context.
 func (m *Manager) StagedDiff() (string, error) {
-	cmd := exec.Command("git", "diff", "--cached")
+	cmd := exec.Command("git", "diff", "--cached", "--", m.context+"/")
 	cmd.Dir = m.baseDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {

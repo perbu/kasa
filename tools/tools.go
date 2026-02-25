@@ -83,6 +83,7 @@ func (k *KubeTools) All() []tool.Tool {
 		NewGetReferenceTool(),
 		NewCheckDeploymentHealthTool(k.clientset),
 		NewSyncManifestsTool(k.manifest),
+		NewManifestStatusTool(k.manifest),
 		NewListManifestsTool(k.manifest),
 		NewReadManifestTool(k.manifest),
 		NewSaveNotesTool(k.manifest),
