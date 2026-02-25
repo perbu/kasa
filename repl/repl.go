@@ -39,10 +39,14 @@ type ContextSwitchResult struct {
 	ContextName     string
 	ResourceFetcher ResourceFetcher
 	DirectIO        *tools.DirectIO
+	DriftScanFunc   DriftScanFunc
 }
 
 // ContextSwitchFunc rebuilds the entire agent stack for a new context.
 type ContextSwitchFunc func(contextName string) (*ContextSwitchResult, error)
+
+// DriftScanFunc runs an on-demand drift scan against the active cluster.
+type DriftScanFunc func(ctx context.Context, mgr *manifest.Manager) (*tools.DriftScanResults, error)
 
 // ToolCallResetter is implemented by objects that track tool call counts
 // and need to be reset between agent turns.
@@ -66,10 +70,11 @@ type REPL struct {
 	resourceFetcher  ResourceFetcher
 	directIO         *tools.DirectIO
 	contextName      string
+	driftScan        DriftScanFunc
 }
 
 // New creates a new REPL instance.
-func New(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, listContexts ContextListFunc, switchContext ContextSwitchFunc, resourceFetcher ResourceFetcher, directIO *tools.DirectIO, contextName string) *REPL {
+func New(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, listContexts ContextListFunc, switchContext ContextSwitchFunc, resourceFetcher ResourceFetcher, directIO *tools.DirectIO, contextName string, driftScan DriftScanFunc) *REPL {
 	return &REPL{
 		runner:           r,
 		sessionService:   ss,
@@ -85,12 +90,13 @@ func New(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Ma
 		resourceFetcher:  resourceFetcher,
 		directIO:         directIO,
 		contextName:      contextName,
+		driftScan:        driftScan,
 	}
 }
 
 // Run starts the interactive REPL loop using bubbletea.
 func (r *REPL) Run(ctx context.Context) error {
-	m := newModel(r.runner, r.sessionService, r.debug, r.manifest, r.apiKey, r.baseURL, r.modelName, r.maxToolCalls, r.toolCallResetter, r.listContexts, r.switchContext, r.resourceFetcher, r.directIO, r.contextName)
+	m := newModel(r.runner, r.sessionService, r.debug, r.manifest, r.apiKey, r.baseURL, r.modelName, r.maxToolCalls, r.toolCallResetter, r.listContexts, r.switchContext, r.resourceFetcher, r.directIO, r.contextName, r.driftScan)
 	p := tea.NewProgram(m, tea.WithContext(ctx))
 	_, err := p.Run()
 	return err
@@ -204,7 +210,8 @@ func (r *REPL) runAgentSync(ctx context.Context, state *SessionState, prompt str
 // PrintWelcome displays the colorized logo and session info.
 func (r *REPL) PrintWelcome(version, model string, toolCount int, deploymentsDir string) {
 	// Colorized ASCII art logo
-	fmt.Print(RenderLogo(version))
+	fmt.Print("\n")
+	fmt.Print(RenderLogo())
 	fmt.Println()
 
 	// Build cluster context list from kubeconfig (via callback), falling back
@@ -224,13 +231,14 @@ func (r *REPL) PrintWelcome(version, model string, toolCount int, deploymentsDir
 	// Session info rendered as markdown
 	info := fmt.Sprintf(`| Setting | Value |
 |---------|-------|
+| Version | %s |
 | Model | %s |
 | Tools | %d |
 | Clusters | %s |
 | Deployments | %s |
 
-Commands: **/approve** **/abort** **/copy** plans · **/commit** **/push** **/status** manifests · **/contexts** **/context** cluster · **/debug** **/dump** **/clear** · **exit**
-`, model, toolCount, contextDisplay, deploymentsDir)
+Commands: **/approve** **/abort** **/copy** plans · **/commit** **/push** **/status** **/drift** manifests · **/contexts** **/context** cluster · **/debug** **/dump** **/clear** · **exit**
+`, version, model, toolCount, contextDisplay, deploymentsDir)
 
 	renderer, err := setupMarkdownRenderer()
 	if err != nil {

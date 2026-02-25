@@ -7,7 +7,7 @@ import (
 )
 
 func TestModelCtrlCQuits(t *testing.T) {
-	m := newModel(nil, nil, false, nil, "", "", "", 25, nil, nil, nil, nil, nil, "")
+	m := newModel(nil, nil, false, nil, "", "", "", 25, nil, nil, nil, nil, nil, "", nil)
 
 	msg := tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
 	result, cmd := m.Update(msg)

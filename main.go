@@ -228,6 +228,12 @@ func main() {
 		}
 	}
 
+	makeDriftScanFn := func(dynClient dynamic.Interface) repl.DriftScanFunc {
+		return func(ctx context.Context, mgr *manifest.Manager) (*tools.DriftScanResults, error) {
+			return tools.RunDriftScan(ctx, dynClient, mgr, nil)
+		}
+	}
+
 	switchContextFn := func(contextName string) (*repl.ContextSwitchResult, error) {
 		// 1. Build new Kubernetes clients.
 		newClientset, newDynamic, resolvedCtx, err := initKubeClient(kubeconfigPath, contextName)
@@ -302,11 +308,12 @@ func main() {
 			ContextName:     resolvedCtx,
 			ResourceFetcher: makeResourceFetcher(newDynamic),
 			DirectIO:        newDirectIO,
+			DriftScanFunc:   makeDriftScanFn(newDynamic),
 		}, nil
 	}
 
 	// Create REPL instance
-	replInstance := repl.New(r, sessionService, *debug, manifestMgr, apiKey, cfg.BaseURL(), cfg.Agent.Model, cfg.Agent.MaxToolCalls, kubeTools.Counter(), listContextsFn, switchContextFn, makeResourceFetcher(dynamicClient), directIO, kubeContext)
+	replInstance := repl.New(r, sessionService, *debug, manifestMgr, apiKey, cfg.BaseURL(), cfg.Agent.Model, cfg.Agent.MaxToolCalls, kubeTools.Counter(), listContextsFn, switchContextFn, makeResourceFetcher(dynamicClient), directIO, kubeContext, makeDriftScanFn(dynamicClient))
 
 	// Non-interactive mode (no approval workflow - runs directly)
 	if !isInteractive {

@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
+	"golang.org/x/term"
 )
 
 // kasaASCII is the block-letter KASA logo (ANSI Shadow style).
@@ -85,89 +86,96 @@ func colorDepth() int {
 	return 8
 }
 
-// --- sparkle line ---
+// --- zigzag pattern ---
 
-type sparkle struct {
-	pos    float64 // 0.0–1.0 across the width
-	char   string
-	bright bool
-}
-
-var topSparkles = []sparkle{
-	{0.06, "✦", true},
-	{0.15, "·", false},
-	{0.28, "✧", true},
-	{0.38, "·", false},
-	{0.50, "✦", false},
-	{0.62, "·", false},
-	{0.72, "✧", true},
-	{0.85, "·", false},
-	{0.94, "✦", true},
-}
-
-func renderSparkleLine(width int, depth int, sparkles []sparkle) string {
+// renderZigzag generates a zigzag pattern string of the given width.
+// Even rows use ╱╲╱╲, odd rows use ╲╱╲╱, creating a woven texture.
+func renderZigzag(width, rowIdx, depth int, tOffset float64) string {
 	if width <= 0 {
 		return ""
 	}
 	var sb strings.Builder
-	idx := 0
+	even := rowIdx%2 == 0
 	for col := range width {
-		if idx < len(sparkles) {
-			pos := min(int(sparkles[idx].pos*float64(width-1)), width-1)
-			if col == pos {
-				s := sparkles[idx]
-				color := logoColorAt(s.pos, depth)
-				style := lipgloss.NewStyle().Foreground(lipgloss.Color(color))
-				if s.bright {
-					style = style.Bold(true)
-				} else {
-					style = style.Faint(true)
-				}
-				sb.WriteString(style.Render(s.char))
-				idx++
-				continue
+		var ch rune
+		if even {
+			if col%2 == 0 {
+				ch = '╱'
+			} else {
+				ch = '╲'
+			}
+		} else {
+			if col%2 == 0 {
+				ch = '╲'
+			} else {
+				ch = '╱'
 			}
 		}
-		sb.WriteRune(' ')
+		// Gradient position: blend across full terminal width
+		t := tOffset + float64(col)/float64(width)*(1.0-tOffset)
+		if t > 1 {
+			t = 1
+		}
+		color := logoColorAt(t, depth)
+		style := lipgloss.NewStyle().
+			Foreground(lipgloss.Color(color)).
+			Faint(true)
+		sb.WriteString(style.Render(string(ch)))
 	}
 	return sb.String()
 }
 
+// termWidth returns the current terminal width, defaulting to 80.
+func termWidth() int {
+	w, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || w <= 0 {
+		return 80
+	}
+	return w
+}
+
 // --- public API ---
 
-// RenderLogo returns the fully colorized KASA ASCII-art logo with sparkles.
-func RenderLogo(version string) string {
+// RenderLogo returns the fully colorized KASA ASCII-art logo with zigzag banner.
+func RenderLogo() string {
 	depth := colorDepth()
 	var sb strings.Builder
 
-	maxWidth := 0
+	logoWidth := 0
 	for _, line := range kasaASCII {
-		if w := utf8.RuneCountInString(line); w > maxWidth {
-			maxWidth = w
+		if w := utf8.RuneCountInString(line); w > logoWidth {
+			logoWidth = w
 		}
 	}
-	if maxWidth == 0 {
+	if logoWidth == 0 {
 		return ""
 	}
 
-	indent := "  "
+	tw := termWidth()
+	leftWidth := 8                               // pattern strip left of logo
+	gap := 2                                     // space on each side of logo
+	rightWidth := tw - leftWidth - gap - logoWidth - gap // pattern fills the rest
+	if rightWidth < 0 {
+		rightWidth = 0
+	}
+
 	rows := len(kasaASCII)
 
-	// Top sparkle decoration
-	sb.WriteString(indent)
-	sb.WriteString(renderSparkleLine(maxWidth, depth, topSparkles))
-	sb.WriteString("\n")
-
-	// Main logo with diagonal gradient
+	// Main logo rows: left pattern, logo, right pattern
 	for rowIdx, line := range kasaASCII {
-		sb.WriteString(indent)
+		// Left zigzag strip
+		if leftWidth > 0 {
+			sb.WriteString(renderZigzag(leftWidth, rowIdx, depth, 0.0))
+		}
+		sb.WriteString(strings.Repeat(" ", gap))
+
+		// Logo characters with diagonal gradient
 		col := 0
 		for _, r := range line {
 			if r == ' ' {
 				sb.WriteRune(' ')
 			} else {
-				// Diagonal sweep: 85 % horizontal, 15 % vertical
-				t := float64(col)/float64(maxWidth)*0.85 +
+				t := float64(col)/float64(logoWidth)*0.85 +
 					float64(rowIdx)/float64(rows)*0.15
 				if t > 1 {
 					t = 1
@@ -180,36 +188,21 @@ func RenderLogo(version string) string {
 			}
 			col++
 		}
+
+		// Pad short logo lines to full logoWidth
+		runeCount := utf8.RuneCountInString(line)
+		if runeCount < logoWidth {
+			sb.WriteString(strings.Repeat(" ", logoWidth-runeCount))
+		}
+
+		sb.WriteString(strings.Repeat(" ", gap))
+
+		// Right zigzag: fills remaining terminal width
+		if rightWidth > 0 {
+			sb.WriteString(renderZigzag(rightWidth, rowIdx, depth, 0.5))
+		}
 		sb.WriteString("\n")
 	}
-
-	// Subtitle line: ✧ Kubernetes Deployment Assistant vX.Y.Z ✧
-	subtitle := fmt.Sprintf("Kubernetes Deployment Assistant %s", version)
-	subtitleLen := utf8.RuneCountInString(subtitle)
-
-	var accentColor, subtitleColor string
-	if depth == 24 {
-		accentColor = gradient24[len(gradient24)-1].hex() // amber
-		subtitleColor = lerpColor(gradient24[1], gradient24[2], 0.5).hex()
-	} else {
-		accentColor = "220"
-		subtitleColor = "135"
-	}
-	accentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(accentColor)).Bold(true)
-	subtitleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(subtitleColor)).Bold(true)
-
-	// Center beneath the logo (account for "✧ " and " ✧")
-	decorated := subtitleLen + 4 // "✧ " + subtitle + " ✧"
-	pad := max((maxWidth-decorated)/2, 0)
-
-	sb.WriteString(indent)
-	sb.WriteString(strings.Repeat(" ", pad))
-	sb.WriteString(accentStyle.Render("✧"))
-	sb.WriteString(" ")
-	sb.WriteString(subtitleStyle.Render(subtitle))
-	sb.WriteString(" ")
-	sb.WriteString(accentStyle.Render("✧"))
-	sb.WriteString("\n")
 
 	return sb.String()
 }

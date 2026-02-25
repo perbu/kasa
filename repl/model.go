@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 
-	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
@@ -58,7 +57,7 @@ type directOutputMsg struct {
 // model is the bubbletea Model for the interactive REPL.
 type model struct {
 	textarea textarea.Model
-	spinner  spinner.Model
+	wave     waveSpinner
 	history  *History
 	state    *SessionState
 
@@ -112,6 +111,9 @@ type model struct {
 	resourceFetcher ResourceFetcher
 	contextName     string // active K8s context for window title
 
+	// drift scan callback
+	driftScan DriftScanFunc
+
 	// direct IO for secret tools
 	directIO           *tools.DirectIO
 	secretInputActive  bool
@@ -136,7 +138,7 @@ var debugStyle = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("8"))
 // toolCallStyle is the dim style for persistent tool call log lines.
 var toolCallStyle = lipgloss.NewStyle().Faint(true)
 
-func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, listContexts ContextListFunc, switchContext ContextSwitchFunc, resourceFetcher ResourceFetcher, directIO *tools.DirectIO, contextName string) model {
+func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, listContexts ContextListFunc, switchContext ContextSwitchFunc, resourceFetcher ResourceFetcher, directIO *tools.DirectIO, contextName string, driftScan DriftScanFunc) model {
 	ta := textarea.New()
 	ta.Placeholder = "Type a message..."
 	ta.SetPromptFunc(2, func(info textarea.PromptInfo) string {
@@ -168,10 +170,7 @@ func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manife
 
 	ta.Focus()
 
-	s := spinner.New(
-		spinner.WithSpinner(spinner.Dot),
-		spinner.WithStyle(lipgloss.NewStyle().Foreground(lipgloss.Color("205"))),
-	)
+	w := newWaveSpinner()
 
 	// Use a fixed dark style to avoid terminal queries (OSC 11) that would
 	// race with bubbletea's stdin reader and produce garbled input.
@@ -187,7 +186,7 @@ func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manife
 
 	return model{
 		textarea:       ta,
-		spinner:        s,
+		wave:           w,
 		history:        NewHistory(),
 		state:          NewSessionState(),
 		runner:         r,
@@ -207,13 +206,14 @@ func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manife
 		switchContext:   switchContext,
 		resourceFetcher: resourceFetcher,
 		contextName:     contextName,
+		driftScan:       driftScan,
 		directIO:        directIO,
 		secretInput:     si,
 	}
 }
 
 func (m model) Init() tea.Cmd {
-	return m.spinner.Tick
+	return m.wave.Tick()
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -339,10 +339,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 		return m, tea.Batch(cmds...)
 
-	case spinner.TickMsg:
+	case waveTickMsg:
 		if m.agentBusy {
 			var cmd tea.Cmd
-			m.spinner, cmd = m.spinner.Update(msg)
+			m.wave, cmd = m.wave.Update(msg)
 			return m, cmd
 		}
 		return m, nil
@@ -530,6 +530,9 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 	case "/status":
 		return m.handleStatus(cmds)
 
+	case "/drift":
+		return m.handleDrift(cmds)
+
 	case "/dump":
 		ctx := context.Background()
 		path, eventCount, err := dumpSession(ctx, m.sessionService, m.sessionID, m.state)
@@ -669,7 +672,7 @@ func (m *model) startAgent(prompt string) tea.Cmd {
 		}
 	}()
 
-	cmds := []tea.Cmd{waitForAgent(ch), m.spinner.Tick}
+	cmds := []tea.Cmd{waitForAgent(ch), m.wave.Tick()}
 	if m.directIO != nil {
 		cmds = append(cmds, waitForSecretInput(m.directIO.InputCh))
 	}
@@ -936,7 +939,7 @@ func (m model) handleContextSelected(msg contextSelectedMsg) (tea.Model, tea.Cmd
 		result, err := switchFn(name)
 		return contextSwitchMsg{result: result, err: err}
 	}
-	return m, tea.Batch(cmd, m.spinner.Tick)
+	return m, tea.Batch(cmd, m.wave.Tick())
 }
 
 // handleContextCancel dismisses the context selector without switching.
@@ -968,6 +971,9 @@ func (m model) handleContextSwitch(msg contextSwitchMsg) (tea.Model, tea.Cmd) {
 	if msg.result.DirectIO != nil {
 		m.directIO = msg.result.DirectIO
 	}
+	if msg.result.DriftScanFunc != nil {
+		m.driftScan = msg.result.DriftScanFunc
+	}
 	m.contextName = msg.result.ContextName
 
 	// Reset session (same as /clear).
@@ -988,6 +994,7 @@ func (m model) handleContextSwitch(msg contextSwitchMsg) (tea.Model, tea.Cmd) {
 
 	cmds = append(cmds, m.textarea.Focus())
 	cmds = append(cmds, tea.Println(fmt.Sprintf("Switched to context: %s", msg.result.ContextName)))
+	cmds = append(cmds, tea.Println("Tip: run /drift to check for manifest drift."))
 	return m, tea.Batch(cmds...)
 }
 
@@ -1011,7 +1018,7 @@ func (m model) handleCommit(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 	m.toolReason = ""
 	m.textarea.Blur()
 
-	cmds = append(cmds, m.commitAsync(), m.spinner.Tick)
+	cmds = append(cmds, m.commitAsync(), m.wave.Tick())
 	return m, tea.Batch(cmds...)
 }
 
@@ -1073,7 +1080,7 @@ func (m model) handlePush(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 			return cmdResultMsg{lines: []string{fmt.Sprintf("Push failed: %v", err)}}
 		}
 		return cmdResultMsg{lines: []string{"Pushed to remote."}}
-	}, m.spinner.Tick)
+	}, m.wave.Tick())
 	return m, tea.Batch(cmds...)
 }
 
@@ -1100,8 +1107,48 @@ func (m model) handleStatus(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 			return cmdResultMsg{lines: []string{"No changes."}}
 		}
 		return cmdResultMsg{lines: []string{status}}
-	}, m.spinner.Tick)
+	}, m.wave.Tick())
 	return m, tea.Batch(cmds...)
+}
+
+// handleDrift implements the /drift command.
+func (m model) handleDrift(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	if m.driftScan == nil {
+		cmds = append(cmds, tea.Println("Drift scanning not available."))
+		return m, tea.Batch(cmds...)
+	}
+	if m.manifest == nil {
+		cmds = append(cmds, tea.Println("No manifest manager configured."))
+		return m, tea.Batch(cmds...)
+	}
+
+	m.agentBusy = true
+	m.statusText = "Scanning for drift..."
+	m.toolName = ""
+	m.toolReason = ""
+	m.textarea.Blur()
+
+	cmds = append(cmds, m.driftAsync(), m.wave.Tick())
+	return m, tea.Batch(cmds...)
+}
+
+// driftAsync returns a Cmd that runs a drift scan in a goroutine.
+func (m *model) driftAsync() tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		results, err := m.driftScan(ctx, m.manifest)
+		if err != nil {
+			return cmdResultMsg{lines: []string{fmt.Sprintf("Drift scan failed: %v", err)}}
+		}
+
+		md := tools.FormatDriftScanResults(results)
+		if md == "" {
+			return cmdResultMsg{lines: []string{"No drift detected."}}
+		}
+
+		rendered := m.renderMarkdown(md)
+		return cmdResultMsg{lines: []string{rendered}}
+	}
 }
 
 // generateCommitMessage makes a one-shot LLM call to generate a commit message from a diff
@@ -1173,7 +1220,7 @@ func (m *model) renderMarkdown(text string) string {
 // buildStatusLine constructs the status text for display.
 func (m *model) buildStatusLine() string {
 	var status string
-	spin := m.spinner.View()
+	spin := m.wave.View()
 
 	if m.toolName != "" {
 		if m.toolReason != "" {
