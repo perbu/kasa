@@ -358,63 +358,6 @@ section h2 {
     line-height: 1.6;
 }
 
-/* === Tools Section === */
-.tools-section {
-    background: var(--bg-card);
-    border-top: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
-    max-width: 100%;
-    padding: 5rem 2rem;
-}
-
-.tools-section h2 {
-    font-size: 2.2rem;
-    font-weight: 700;
-    text-align: center;
-    margin-bottom: 2.5rem;
-    letter-spacing: -0.02em;
-}
-
-.tools-grid {
-    max-width: var(--max-width);
-    margin: 0 auto;
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 2rem;
-}
-
-.tool-group {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 1.75rem;
-}
-
-.tool-group h3 {
-    font-size: 1rem;
-    margin-bottom: 1rem;
-    color: var(--cyan);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    font-weight: 600;
-}
-
-.tool-group ul {
-    list-style: none;
-}
-
-.tool-group li {
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
-    color: var(--text-dim);
-    padding: 0.35rem 0;
-    border-bottom: 1px solid rgba(55, 65, 81, 0.4);
-}
-
-.tool-group li:last-child {
-    border-bottom: none;
-}
-
 /* === Getting Started === */
 .install-steps {
     max-width: 680px;
@@ -538,10 +481,6 @@ footer {
 
     .feature-grid {
         grid-template-columns: 1fr 1fr;
-    }
-
-    .tools-grid {
-        grid-template-columns: 1fr;
     }
 
     .req-grid {
