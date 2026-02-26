@@ -31,9 +31,6 @@ import (
 //go:embed .version
 var version string
 
-//go:embed config.example.yaml
-var exampleConfig []byte
-
 func main() {
 	prompt := flag.String("prompt", "", "Run a single prompt and exit (non-interactive mode)")
 	debug := flag.Bool("debug", false, "Enable debug output")
@@ -42,13 +39,27 @@ func main() {
 
 	// Handle "init" subcommand
 	if flag.Arg(0) == "init" {
-		runInit()
+		if err := runWizard(true); err != nil {
+			log.Fatalf("Setup wizard failed: %v", err)
+		}
 		return
 	}
 
-	cfg, err := loadConfig()
+	cfg, configExists, err := loadConfig()
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	// Auto-trigger wizard on first run when no config exists
+	if !configExists {
+		if err := runWizard(false); err != nil {
+			log.Fatalf("Setup wizard failed: %v", err)
+		}
+		// Reload config after wizard writes it
+		cfg, _, err = loadConfig()
+		if err != nil {
+			log.Fatalf("Failed to load config after setup: %v", err)
+		}
 	}
 
 	// Initialize Kubernetes client
@@ -339,28 +350,6 @@ func main() {
 	if err := replInstance.Run(ctx); err != nil {
 		log.Fatalf("REPL error: %v", err)
 	}
-}
-
-// runInit creates ~/.kasa/config.yaml from the embedded example config.
-func runInit() {
-	dir, err := configDir()
-	if err != nil {
-		log.Fatalf("Failed to determine config directory: %v", err)
-	}
-
-	path := filepath.Join(dir, "config.yaml")
-	if _, err := os.Stat(path); err == nil {
-		fmt.Printf("Config file already exists: %s\n", path)
-		fmt.Println("Remove it first if you want to reinitialize.")
-		os.Exit(1)
-	}
-
-	if err := os.WriteFile(path, exampleConfig, 0644); err != nil {
-		log.Fatalf("Failed to write config file: %v", err)
-	}
-
-	fmt.Printf("Created config file: %s\n", path)
-	fmt.Println("Edit it to add your API key, model, and customize settings.")
 }
 
 // initKubeClient initializes a Kubernetes clientset, dynamic client, and resolves

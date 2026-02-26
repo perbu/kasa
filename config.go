@@ -50,33 +50,34 @@ func configDir() (string, error) {
 }
 
 // loadConfig loads configuration from ~/.kasa/config.yaml.
-// If the file does not exist, returns a zero-value Config (all defaults apply).
-func loadConfig() (*Config, error) {
-	var cfg Config
+// If the file does not exist, returns a zero-value Config (all defaults apply)
+// and configExists=false so the caller can trigger the setup wizard.
+func loadConfig() (cfg *Config, configExists bool, err error) {
+	var c Config
 
 	dir, err := configDir()
 	if err != nil {
 		// Can't determine home dir — use defaults
-		applyDefaults(&cfg)
-		return &cfg, nil
+		applyDefaults(&c)
+		return &c, false, nil
 	}
 
 	path := filepath.Join(dir, "config.yaml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			applyDefaults(&cfg)
-			return &cfg, nil
+			applyDefaults(&c)
+			return &c, false, nil
 		}
-		return nil, fmt.Errorf("reading config file: %w", err)
+		return nil, false, fmt.Errorf("reading config file: %w", err)
 	}
 
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parsing config file %s: %w", path, err)
+	if err := yaml.Unmarshal(data, &c); err != nil {
+		return nil, true, fmt.Errorf("parsing config file %s: %w", path, err)
 	}
 
-	applyDefaults(&cfg)
-	return &cfg, nil
+	applyDefaults(&c)
+	return &c, true, nil
 }
 
 // applyDefaults fills in zero-value fields with sensible defaults.
