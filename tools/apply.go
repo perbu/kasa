@@ -126,6 +126,9 @@ func (t *ApplyManifestTool) Run(ctx tool.Context, args any) (map[string]any, err
 		return errorResult(fmt.Sprintf("invalid YAML: %v", parseErr))
 	}
 
+	// Ensure managed-by label is present
+	ensureManagedByLabel(obj)
+
 	// Set namespace
 	obj.SetNamespace(namespace)
 

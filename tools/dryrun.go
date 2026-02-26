@@ -138,6 +138,9 @@ func (t *DryRunApplyTool) dryRunUnstructured(content []byte, namespace, app, res
 		}, nil
 	}
 
+	// Ensure managed-by label is present (dry-run should validate what would actually be applied)
+	ensureManagedByLabel(obj)
+
 	gvk := obj.GroupVersionKind()
 	if gvk.Kind == "" {
 		return map[string]any{

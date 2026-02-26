@@ -117,6 +117,9 @@ func (t *ApplyResourceTool) Run(ctx tool.Context, args any) (map[string]any, err
 		return errorResult(fmt.Sprintf("failed to parse YAML: %v", parseErr))
 	}
 
+	// Ensure managed-by label is present
+	ensureManagedByLabel(obj)
+
 	// Extract GVK
 	gvk := obj.GroupVersionKind()
 	if gvk.Kind == "" {

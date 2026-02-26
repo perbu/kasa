@@ -4,9 +4,24 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 )
+
+const managedByLabel = "app.kubernetes.io/managed-by"
+const managedByValue = "kasa"
+
+// ensureManagedByLabel sets the app.kubernetes.io/managed-by: kasa label on an
+// unstructured object, preserving any existing labels.
+func ensureManagedByLabel(obj *unstructured.Unstructured) {
+	labels := obj.GetLabels()
+	if labels == nil {
+		labels = make(map[string]string)
+	}
+	labels[managedByLabel] = managedByValue
+	obj.SetLabels(labels)
+}
 
 // parseToolArgs normalizes the args parameter from ADK tool calls into a map.
 // ADK may pass args as map[string]any or as a JSON string.
