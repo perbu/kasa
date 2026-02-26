@@ -31,7 +31,7 @@ import (
 //go:embed .version
 var version string
 
-//go:embed config.yaml.example
+//go:embed config.example.yaml
 var exampleConfig []byte
 
 func main() {
