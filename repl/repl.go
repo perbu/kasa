@@ -208,7 +208,7 @@ func (r *REPL) runAgentSync(ctx context.Context, state *SessionState, prompt str
 }
 
 // PrintWelcome displays the colorized logo and session info.
-func (r *REPL) PrintWelcome(version, model string, toolCount int, deploymentsDir string) {
+func (r *REPL) PrintWelcome(version, model string, toolCount int, deploymentsDir, remote string) {
 	// Colorized ASCII art logo
 	fmt.Print("\n")
 	fmt.Print(RenderLogo())
@@ -229,6 +229,13 @@ func (r *REPL) PrintWelcome(version, model string, toolCount int, deploymentsDir
 	}
 
 	// Session info rendered as markdown
+	versionDisplay := "`" + version + "`"
+	modelDisplay := "`" + model + "`"
+	deploymentsDisplay := "`" + deploymentsDir + "`"
+	remoteDisplay := "`" + remote + "`"
+	if remote == "" {
+		remoteDisplay = "none"
+	}
 	info := fmt.Sprintf(`| Setting | Value |
 |---------|-------|
 | Version | %s |
@@ -236,9 +243,10 @@ func (r *REPL) PrintWelcome(version, model string, toolCount int, deploymentsDir
 | Tools | %d |
 | Clusters | %s |
 | Deployments | %s |
+| Remote | %s |
 
-Commands: **/approve** **/abort** **/copy** plans · **/commit** **/push** **/status** **/drift** manifests · **/contexts** **/context** cluster · **/debug** **/dump** **/clear** · **exit**
-`, version, model, toolCount, contextDisplay, deploymentsDir)
+Commands: **/approve** **/abort** **/copy** plans · **/commit** **/pull** **/push** **/status** **/drift** manifests · **/contexts** **/context** cluster · **/debug** **/dump** **/clear** · **exit**
+`, versionDisplay, modelDisplay, toolCount, contextDisplay, deploymentsDisplay, remoteDisplay)
 
 	renderer, err := setupMarkdownRenderer()
 	if err != nil {

@@ -529,6 +529,9 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 	case "/commit":
 		return m.handleCommit(cmds)
 
+	case "/pull":
+		return m.handlePull(cmds)
+
 	case "/push":
 		return m.handlePush(cmds)
 
@@ -1077,6 +1080,34 @@ func (m *model) commitAsync() tea.Cmd {
 		}
 		return cmdResultMsg{lines: lines}
 	}
+}
+
+// handlePull implements the /pull command.
+func (m model) handlePull(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	if m.manifest == nil {
+		cmds = append(cmds, tea.Println("No manifest manager configured."))
+		return m, tea.Batch(cmds...)
+	}
+
+	if !m.manifest.HasRemote() {
+		cmds = append(cmds, tea.Println("No git remote configured."))
+		return m, tea.Batch(cmds...)
+	}
+
+	m.agentBusy = true
+	m.statusText = "Pulling..."
+	m.toolName = ""
+	m.toolReason = ""
+	m.textarea.Blur()
+
+	mfst := m.manifest
+	cmds = append(cmds, func() tea.Msg {
+		if err := mfst.Pull(); err != nil {
+			return cmdResultMsg{lines: []string{fmt.Sprintf("Pull failed: %v", err)}}
+		}
+		return cmdResultMsg{lines: []string{"Pulled from remote."}}
+	}, m.wave.Tick())
+	return m, tea.Batch(cmds...)
 }
 
 // handlePush implements the /push command.
