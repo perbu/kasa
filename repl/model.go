@@ -253,8 +253,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.PasteMsg:
-		// Forward paste events to the textarea (bubbletea v2 delivers
-		// pasted text as PasteMsg, not KeyPressMsg).
+		// Forward paste events (bubbletea v2 delivers pasted text as
+		// PasteMsg, not KeyPressMsg).
+		if m.secretInputActive {
+			var cmd tea.Cmd
+			m.secretInput, cmd = m.secretInput.Update(msg)
+			return m, cmd
+		}
 		if !m.agentBusy {
 			var cmd tea.Cmd
 			m.textarea, cmd = m.textarea.Update(msg)
@@ -396,13 +401,22 @@ func (m model) View() tea.View {
 		return tea.NewView("")
 	}
 
-	// Show secret input prompt
+	// Show secret input prompt in a yellow "Direct Input" box
 	if m.secretInputActive {
-		var sb strings.Builder
+		var content strings.Builder
 		if m.secretInputRequest != nil {
-			sb.WriteString(m.secretInputRequest.Prompt)
+			content.WriteString(m.secretInputRequest.Prompt)
 		}
-		sb.WriteString(m.secretInput.View())
+		content.WriteString(m.secretInput.View())
+
+		boxWidth := max(m.width-4, 40)
+		if boxWidth > 80 {
+			boxWidth = 80
+		}
+		var sb strings.Builder
+		sb.WriteString(directInputTitleStyle.Render("Direct Input"))
+		sb.WriteString("\n")
+		sb.WriteString(directInputBorderStyle.Width(boxWidth).Render(content.String()))
 		sb.WriteString("\n")
 		return tea.NewView(sb.String())
 	}
@@ -1523,6 +1537,16 @@ var (
 	directOutputTitleStyle = lipgloss.NewStyle().
 				Bold(true).
 				Foreground(lipgloss.Color("10"))
+
+	// directInputBorderStyle wraps the secret input prompt in a yellow box.
+	directInputBorderStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("3")). // yellow
+				Padding(0, 2)
+
+	directInputTitleStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("3"))
 )
 
 // renderDirectOutput wraps tool-to-user text in a styled box.
