@@ -73,8 +73,8 @@ func buildPlanMarkdown(plan *Plan, diffs map[int]string) string {
 			}
 		}
 
-		// For apply_resource actions, show diff from current cluster state if available
-		if action.Tool == "apply_resource" {
+		// For apply_resource/apply_manifest actions, show diff from current cluster state if available
+		if action.Tool == "apply_resource" || action.Tool == "apply_manifest" {
 			if diff, ok := diffs[i]; ok && diff != "" {
 				md.WriteString("**Diff from current cluster state:**\n")
 				md.WriteString("```diff\n")
@@ -93,22 +93,50 @@ func buildPlanMarkdown(plan *Plan, diffs map[int]string) string {
 }
 
 // computePlanDiffs computes unified diffs between the current cluster state and
-// the proposed YAML for each apply_resource action in the plan.
+// the proposed YAML for each apply_resource or apply_manifest action in the plan.
 // Returns nil when fetcher is nil (no-op for non-interactive mode).
-func computePlanDiffs(plan *Plan, fetcher ResourceFetcher) map[int]string {
+func computePlanDiffs(plan *Plan, fetcher ResourceFetcher, manifestReader ...ManifestReader) map[int]string {
 	if fetcher == nil || plan == nil {
 		return nil
 	}
 
+	var mReader ManifestReader
+	if len(manifestReader) > 0 {
+		mReader = manifestReader[0]
+	}
+
 	diffs := make(map[int]string)
 	for i, action := range plan.Actions {
-		if action.Tool != "apply_resource" {
+		var yamlContent string
+
+		switch action.Tool {
+		case "apply_resource":
+			y, ok := action.Parameters["yaml"].(string)
+			if !ok || y == "" {
+				continue
+			}
+			yamlContent = y
+
+		case "apply_manifest":
+			if mReader == nil {
+				continue
+			}
+			ns, _ := action.Parameters["namespace"].(string)
+			app, _ := action.Parameters["app"].(string)
+			rt, _ := action.Parameters["type"].(string)
+			if ns == "" || app == "" || rt == "" {
+				continue
+			}
+			content, err := mReader(ns, app, rt)
+			if err != nil || content == "" {
+				continue
+			}
+			yamlContent = content
+
+		default:
 			continue
 		}
-		yamlContent, ok := action.Parameters["yaml"].(string)
-		if !ok || yamlContent == "" {
-			continue
-		}
+
 		existing, err := fetcher(yamlContent)
 		if err != nil || existing == "" {
 			continue

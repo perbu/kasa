@@ -513,8 +513,9 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 		if m.state.HasPendingPlan() {
 			plan := m.state.PendingPlan
 			fetcher := m.resourceFetcher
+			mReader := manifestReaderFrom(m.manifest)
 			cmds = append(cmds, func() tea.Msg {
-				diffs := computePlanDiffs(plan, fetcher)
+				diffs := computePlanDiffs(plan, fetcher, mReader)
 				return planRenderedMsg{text: RenderPlan(plan, diffs)}
 			})
 		} else {
@@ -737,8 +738,9 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 		if m.state.HasPendingPlan() {
 			plan := m.state.PendingPlan
 			fetcher := m.resourceFetcher
+			mReader := manifestReaderFrom(m.manifest)
 			cmds = append(cmds, func() tea.Msg {
-				diffs := computePlanDiffs(plan, fetcher)
+				diffs := computePlanDiffs(plan, fetcher, mReader)
 				return planRenderedMsg{text: RenderPlan(plan, diffs)}
 			})
 		}
@@ -1522,6 +1524,20 @@ func renderDirectOutput(text string, width int) string {
 		boxWidth = 80
 	}
 	return directOutputBorderStyle.Width(boxWidth).Render(sb.String())
+}
+
+// manifestReaderFrom wraps a manifest.Manager into a ManifestReader callback.
+func manifestReaderFrom(mgr *manifest.Manager) ManifestReader {
+	if mgr == nil {
+		return nil
+	}
+	return func(namespace, app, resourceType string) (string, error) {
+		data, err := mgr.ReadManifest(namespace, app, resourceType)
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	}
 }
 
 // collectPlanYAML extracts all YAML content from a plan's actions.

@@ -21,6 +21,9 @@ import (
 // given the proposed YAML. Returns ("", nil) when the resource doesn't exist yet.
 type ResourceFetcher func(yamlContent string) (string, error)
 
+// ManifestReader reads a stored manifest file and returns its YAML content.
+type ManifestReader func(namespace, app, resourceType string) (string, error)
+
 // ContextInfo describes a single kubeconfig context.
 type ContextInfo struct {
 	Name    string

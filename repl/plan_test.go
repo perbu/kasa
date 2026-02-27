@@ -276,6 +276,104 @@ func TestComputePlanDiffsNormalizesKeyOrder(t *testing.T) {
 	}
 }
 
+func TestComputePlanDiffsApplyManifest(t *testing.T) {
+	// Stored manifest has image 0.4.0
+	storedYAML := "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: activity\n  namespace: activity\nspec:\n  template:\n    spec:\n      containers:\n      - name: activity\n        image: activity:0.4.0\n"
+
+	// Cluster has image 0.3.9
+	clusterYAML := "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: activity\n  namespace: activity\nspec:\n  template:\n    spec:\n      containers:\n      - name: activity\n        image: activity:0.3.9\n"
+
+	fetcher := func(yaml string) (string, error) {
+		return clusterYAML, nil
+	}
+	manifestReader := func(namespace, app, resourceType string) (string, error) {
+		if namespace == "activity" && app == "activity" && resourceType == "deployment" {
+			return storedYAML, nil
+		}
+		return "", nil
+	}
+
+	plan := &Plan{
+		Description: "Bump image to 0.4.0",
+		Actions: []PlannedAction{
+			{
+				Tool:   "apply_manifest",
+				Reason: "Update the activity deployment image from 0.3.9 to 0.4.0",
+				Parameters: map[string]any{
+					"namespace": "activity",
+					"app":       "activity",
+					"type":      "deployment",
+				},
+			},
+		},
+	}
+
+	diffs := computePlanDiffs(plan, fetcher, manifestReader)
+	diff, ok := diffs[0]
+	if !ok {
+		t.Fatal("expected a diff for apply_manifest action 0")
+	}
+	if !strings.Contains(diff, "0.3.9") || !strings.Contains(diff, "0.4.0") {
+		t.Errorf("diff should show image version change, got:\n%s", diff)
+	}
+}
+
+func TestComputePlanDiffsApplyManifestNoReader(t *testing.T) {
+	fetcher := func(yaml string) (string, error) {
+		return "apiVersion: v1\nkind: ConfigMap\n", nil
+	}
+
+	plan := &Plan{
+		Description: "test",
+		Actions: []PlannedAction{
+			{
+				Tool:   "apply_manifest",
+				Reason: "apply",
+				Parameters: map[string]any{
+					"namespace": "default",
+					"app":       "test",
+					"type":      "configmap",
+				},
+			},
+		},
+	}
+
+	// No manifest reader — should produce no diffs (not panic)
+	diffs := computePlanDiffs(plan, fetcher)
+	if len(diffs) != 0 {
+		t.Errorf("expected no diffs without manifest reader, got %d", len(diffs))
+	}
+}
+
+func TestBuildPlanMarkdownApplyManifestDiff(t *testing.T) {
+	plan := &Plan{
+		Description: "Bump image",
+		Actions: []PlannedAction{
+			{
+				Tool:   "apply_manifest",
+				Reason: "update deployment",
+				Parameters: map[string]any{
+					"namespace": "default",
+					"app":       "nginx",
+					"type":      "deployment",
+				},
+			},
+		},
+	}
+
+	diffs := map[int]string{
+		0: "--- cluster\n+++ proposed\n@@ -1,2 +1,2 @@\n-image: nginx:1.0\n+image: nginx:2.0\n",
+	}
+
+	md := buildPlanMarkdown(plan, diffs)
+	if !strings.Contains(md, "Diff from current cluster state") {
+		t.Error("expected diff header for apply_manifest action")
+	}
+	if !strings.Contains(md, "```diff") {
+		t.Error("expected diff code block")
+	}
+}
+
 func TestRenderPlanNil(t *testing.T) {
 	out := RenderPlan(nil, nil)
 	if !strings.Contains(out, "No plan") {
