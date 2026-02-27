@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -10,6 +11,23 @@ import (
 	"google.golang.org/genai"
 )
 
+const defaultConnErrorThreshold = 3
+
+// connErrorPatterns are substrings that indicate a network/connection error.
+// Matched case-insensitively against the "error" field in tool results.
+var connErrorPatterns = []string{
+	"i/o timeout",
+	"connection refused",
+	"connection reset",
+	"no such host",
+	"network is unreachable",
+	"tls handshake timeout",
+	"dial tcp",
+	"context deadline exceeded",
+	"no route to host",
+	"connection timed out",
+}
+
 // ToolCallCounter tracks per-tool invocation counts across a single agent turn.
 // Call Reset() at the start of each turn to clear the counts.
 type ToolCallCounter struct {
@@ -17,6 +35,9 @@ type ToolCallCounter struct {
 	counts    map[string]int
 	threshold int // inject warning after this many calls to the same tool
 	total     atomic.Int32
+
+	consecutiveConnErrors int  // streak counter across all tools
+	connErrorTriggered    bool // sticky flag, stays true once threshold hit
 }
 
 // NewToolCallCounter creates a counter that warns after threshold calls per tool.
@@ -49,6 +70,53 @@ func (c *ToolCallCounter) Reset() {
 	for k := range c.counts {
 		delete(c.counts, k)
 	}
+	c.consecutiveConnErrors = 0
+	c.connErrorTriggered = false
+}
+
+// isConnectionError checks whether a tool result contains a network/connection error.
+func isConnectionError(result map[string]any) bool {
+	errVal, ok := result["error"]
+	if !ok {
+		return false
+	}
+	errStr, ok := errVal.(string)
+	if !ok {
+		return false
+	}
+	lower := strings.ToLower(errStr)
+	for _, pattern := range connErrorPatterns {
+		if strings.Contains(lower, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+// RecordConnectionError increments the streak counter and sets the triggered
+// flag once the threshold is reached. Returns true if the threshold has been hit.
+func (c *ToolCallCounter) RecordConnectionError() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.consecutiveConnErrors++
+	if c.consecutiveConnErrors >= defaultConnErrorThreshold {
+		c.connErrorTriggered = true
+	}
+	return c.connErrorTriggered
+}
+
+// ClearConnectionErrors resets the streak counter but not the triggered flag.
+func (c *ToolCallCounter) ClearConnectionErrors() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.consecutiveConnErrors = 0
+}
+
+// ConnectionErrorTriggered returns whether the connection error threshold has been hit.
+func (c *ToolCallCounter) ConnectionErrorTriggered() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.connErrorTriggered
 }
 
 // runnableTool combines all interfaces that ADK expects a tool to implement.
@@ -95,6 +163,19 @@ func (ct *countingTool) Run(ctx tool.Context, args any) (map[string]any, error) 
 	result, err := ct.inner.Run(ctx, args)
 	if err != nil {
 		return result, err
+	}
+
+	if result != nil && isConnectionError(result) {
+		ct.counter.RecordConnectionError()
+		if ct.counter.ConnectionErrorTriggered() {
+			result["_connection_error"] = "CRITICAL: The Kubernetes API is unreachable " +
+				"(multiple consecutive connection failures across different tools). " +
+				"Do NOT call any more tools. Instead, tell the user that the cluster " +
+				"appears to be unreachable and suggest they check their network " +
+				"connection, VPN, or cluster status."
+		}
+	} else {
+		ct.counter.ClearConnectionErrors()
 	}
 
 	if ct.counter.threshold > 0 && count >= ct.counter.threshold {
