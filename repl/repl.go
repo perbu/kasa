@@ -245,8 +245,10 @@ func (r *REPL) PrintWelcome(version, model string, toolCount int, deploymentsDir
 | Deployments | %s |
 | Remote | %s |
 
-Commands: **/approve** **/abort** **/copy** plans · **/commit** **/pull** **/push** **/status** **/drift** manifests · **/contexts** **/context** cluster · **/debug** **/dump** **/clear** · **exit**
-`, versionDisplay, modelDisplay, toolCount, contextDisplay, deploymentsDisplay, remoteDisplay)
+%s
+
+%s
+`, versionDisplay, modelDisplay, toolCount, contextDisplay, deploymentsDisplay, remoteDisplay, commandSummary(), randomTip())
 
 	renderer, err := setupMarkdownRenderer()
 	if err != nil {

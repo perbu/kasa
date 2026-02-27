@@ -584,27 +584,8 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 		cmds = append(cmds, tea.Println("Context cleared."))
 		return m, tea.Batch(cmds...)
 
-	case "/contexts":
-		if m.listContexts == nil {
-			cmds = append(cmds, tea.Println("Context listing not available."))
-			return m, tea.Batch(cmds...)
-		}
-		ctxs, err := m.listContexts()
-		if err != nil {
-			cmds = append(cmds, tea.Println(fmt.Sprintf("Failed to list contexts: %v", err)))
-			return m, tea.Batch(cmds...)
-		}
-		for _, c := range ctxs {
-			marker := "  "
-			if c.Active {
-				marker = "● "
-			}
-			line := fmt.Sprintf("%s%s", marker, c.Name)
-			if c.Cluster != "" && c.Cluster != c.Name {
-				line += fmt.Sprintf(" (%s)", c.Cluster)
-			}
-			cmds = append(cmds, tea.Println(line))
-		}
+	case "/help":
+		cmds = append(cmds, tea.Println(commandHelp()))
 		return m, tea.Batch(cmds...)
 
 	case "/context":

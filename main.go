@@ -79,13 +79,10 @@ func main() {
 		log.Fatalf("Failed to initialize git in manifest directory: %v", err)
 	}
 
-	// Set up git remote and auto-pull if configured
+	// Set up git remote if configured (no auto-pull; use /pull to sync)
 	if cfg.Deployments.Remote != "" {
 		if err := manifestMgr.SetupRemote(cfg.Deployments.Remote); err != nil {
 			log.Fatalf("Failed to set up git remote: %v", err)
-		}
-		if err := manifestMgr.Pull(); err != nil {
-			log.Printf("Warning: failed to pull manifests: %v", err)
 		}
 	}
 
@@ -264,7 +261,6 @@ func main() {
 			if err := newManifest.SetupRemote(cfg.Deployments.Remote); err != nil {
 				return nil, fmt.Errorf("setting up remote: %w", err)
 			}
-			_ = newManifest.Pull() // best-effort
 		}
 
 		// 3. New tools (with fresh DirectIO).
