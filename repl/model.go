@@ -252,6 +252,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case tea.PasteMsg:
+		// Forward paste events to the textarea (bubbletea v2 delivers
+		// pasted text as PasteMsg, not KeyPressMsg).
+		if !m.agentBusy {
+			var cmd tea.Cmd
+			m.textarea, cmd = m.textarea.Update(msg)
+			return m, cmd
+		}
+		return m, nil
+
 	case tea.KeyPressMsg:
 		// Ctrl+C: cancel agent, dismiss modal, or quit
 		if msg.String() == "ctrl+c" {
