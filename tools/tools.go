@@ -40,6 +40,7 @@ type KubeTools struct {
 	jinaAPIKey    string
 	counter       *ToolCallCounter
 	directIO      *DirectIO
+	guard         *MutationGuard
 }
 
 // NewKubeTools creates a new KubeTools instance with the given clientset, dynamic client, manifest manager, and Jina API key.
@@ -56,6 +57,7 @@ func NewKubeTools(clientset *kubernetes.Clientset, dynamicClient dynamic.Interfa
 		jinaAPIKey:    jinaAPIKey,
 		counter:       NewToolCallCounter(warnThreshold),
 		directIO:      directIO,
+		guard:         NewMutationGuard(),
 	}
 }
 
@@ -67,6 +69,12 @@ func (k *KubeTools) DirectIO() *DirectIO {
 // Counter returns the shared tool call counter so the REPL can reset it between turns.
 func (k *KubeTools) Counter() *ToolCallCounter {
 	return k.counter
+}
+
+// Guard returns the mutation guard so the REPL can toggle it based on
+// the plan/approval workflow.
+func (k *KubeTools) Guard() *MutationGuard {
+	return k.guard
 }
 
 // All returns all available Kubernetes tools implementing tool.Tool interface.
@@ -118,7 +126,7 @@ func (k *KubeTools) All() []tool.Tool {
 	wrapped := make([]tool.Tool, len(raw))
 	for i, t := range raw {
 		if rt, ok := t.(runnableTool); ok {
-			wrapped[i] = &countingTool{inner: rt, counter: k.counter}
+			wrapped[i] = &countingTool{inner: rt, counter: k.counter, guard: k.guard}
 		} else {
 			wrapped[i] = t // shouldn't happen, but don't break
 		}

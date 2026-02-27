@@ -316,14 +316,17 @@ func main() {
 			ResourceFetcher: makeResourceFetcher(newDynamic),
 			DirectIO:        newDirectIO,
 			DriftScanFunc:   makeDriftScanFn(newDynamic),
+			MutationGuard:   newKubeTools.Guard(),
 		}, nil
 	}
 
 	// Create REPL instance
-	replInstance := repl.New(r, sessionService, *debug, manifestMgr, apiKey, cfg.BaseURL(), cfg.Agent.Model, cfg.Agent.MaxToolCalls, kubeTools.Counter(), listContextsFn, switchContextFn, makeResourceFetcher(dynamicClient), directIO, kubeContext, makeDriftScanFn(dynamicClient))
+	replInstance := repl.New(r, sessionService, *debug, manifestMgr, apiKey, cfg.BaseURL(), cfg.Agent.Model, cfg.Agent.MaxToolCalls, kubeTools.Counter(), kubeTools.Guard(), listContextsFn, switchContextFn, makeResourceFetcher(dynamicClient), directIO, kubeContext, makeDriftScanFn(dynamicClient))
 
 	// Non-interactive mode (no approval workflow - runs directly)
 	if !isInteractive {
+		// Disable mutation guard: non-interactive mode has no plan/approval workflow.
+		kubeTools.Guard().Allow()
 		if *debug {
 			fmt.Printf("Model: %s | Tools: %d | Deployments folder: %s\n", cfg.Agent.Model, len(kubeTools.All()), manifestMgr.BaseDir())
 			fmt.Printf("Prompt: %s\n\n", *prompt)

@@ -43,6 +43,7 @@ type ContextSwitchResult struct {
 	ResourceFetcher ResourceFetcher
 	DirectIO        *tools.DirectIO
 	DriftScanFunc   DriftScanFunc
+	MutationGuard   *tools.MutationGuard
 }
 
 // ContextSwitchFunc rebuilds the entire agent stack for a new context.
@@ -68,6 +69,7 @@ type REPL struct {
 	modelName        string
 	maxToolCalls     int
 	toolCallResetter ToolCallResetter
+	mutationGuard    *tools.MutationGuard
 	listContexts     ContextListFunc
 	switchContext    ContextSwitchFunc
 	resourceFetcher  ResourceFetcher
@@ -77,7 +79,7 @@ type REPL struct {
 }
 
 // New creates a new REPL instance.
-func New(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, listContexts ContextListFunc, switchContext ContextSwitchFunc, resourceFetcher ResourceFetcher, directIO *tools.DirectIO, contextName string, driftScan DriftScanFunc) *REPL {
+func New(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, mutationGuard *tools.MutationGuard, listContexts ContextListFunc, switchContext ContextSwitchFunc, resourceFetcher ResourceFetcher, directIO *tools.DirectIO, contextName string, driftScan DriftScanFunc) *REPL {
 	return &REPL{
 		runner:           r,
 		sessionService:   ss,
@@ -88,6 +90,7 @@ func New(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Ma
 		modelName:        modelName,
 		maxToolCalls:     maxToolCalls,
 		toolCallResetter: toolCallResetter,
+		mutationGuard:    mutationGuard,
 		listContexts:     listContexts,
 		switchContext:    switchContext,
 		resourceFetcher:  resourceFetcher,
@@ -99,7 +102,7 @@ func New(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Ma
 
 // Run starts the interactive REPL loop using bubbletea.
 func (r *REPL) Run(ctx context.Context) error {
-	m := newModel(r.runner, r.sessionService, r.debug, r.manifest, r.apiKey, r.baseURL, r.modelName, r.maxToolCalls, r.toolCallResetter, r.listContexts, r.switchContext, r.resourceFetcher, r.directIO, r.contextName, r.driftScan)
+	m := newModel(r.runner, r.sessionService, r.debug, r.manifest, r.apiKey, r.baseURL, r.modelName, r.maxToolCalls, r.toolCallResetter, r.mutationGuard, r.listContexts, r.switchContext, r.resourceFetcher, r.directIO, r.contextName, r.driftScan)
 	p := tea.NewProgram(m, tea.WithContext(ctx))
 	_, err := p.Run()
 	return err

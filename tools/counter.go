@@ -127,11 +127,14 @@ type runnableTool interface {
 }
 
 // countingTool wraps a runnableTool to track invocations and inject warnings.
+// It also enforces the mutation guard: mutating tools are blocked when the
+// guard says so (i.e. no approved plan).
 // It satisfies both the tool.Tool interface and ADK's internal
 // RequestProcessor / FunctionTool interfaces so the runner dispatches it correctly.
 type countingTool struct {
 	inner   runnableTool
 	counter *ToolCallCounter
+	guard   *MutationGuard
 }
 
 // tool.Tool interface
@@ -159,6 +162,17 @@ func (ct *countingTool) Declaration() *genai.FunctionDeclaration {
 }
 
 func (ct *countingTool) Run(ctx tool.Context, args any) (map[string]any, error) {
+	// Enforce mutation guard: block mutating tools when no plan is approved.
+	// This is the code-level enforcement that prevents the LLM from bypassing
+	// the plan/approval workflow. The guard is toggled by the REPL.
+	if ct.guard != nil && ct.guard.IsBlocked() && ct.inner.Category() == CategoryMutating {
+		return map[string]any{
+			"error": "BLOCKED: This tool modifies cluster state and requires plan approval. " +
+				"You MUST call propose_plan first with a description of what you intend to do " +
+				"and wait for user approval before executing any mutating tools.",
+		}, nil
+	}
+
 	count := ct.counter.Increment(ct.inner.Name())
 	result, err := ct.inner.Run(ctx, args)
 	if err != nil {

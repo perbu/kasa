@@ -82,6 +82,7 @@ type model struct {
 	toolCallCount    int              // number of tool calls in current agent turn
 	maxToolCalls     int              // configurable limit per turn
 	toolCallResetter ToolCallResetter // reset per-tool counters between turns
+	mutationGuard    *tools.MutationGuard // blocks mutating tools unless plan is approved
 
 	// status display
 	statusText        string
@@ -143,7 +144,7 @@ var debugStyle = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("8"))
 // toolCallStyle is the dim style for persistent tool call log lines.
 var toolCallStyle = lipgloss.NewStyle().Faint(true)
 
-func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, listContexts ContextListFunc, switchContext ContextSwitchFunc, resourceFetcher ResourceFetcher, directIO *tools.DirectIO, contextName string, driftScan DriftScanFunc) model {
+func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, mutationGuard *tools.MutationGuard, listContexts ContextListFunc, switchContext ContextSwitchFunc, resourceFetcher ResourceFetcher, directIO *tools.DirectIO, contextName string, driftScan DriftScanFunc) model {
 	ta := textarea.New()
 	ta.Placeholder = "Type a message..."
 	ta.SetPromptFunc(2, func(info textarea.PromptInfo) string {
@@ -206,6 +207,7 @@ func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manife
 		modelName:        modelName,
 		maxToolCalls:     maxToolCalls,
 		toolCallResetter: toolCallResetter,
+		mutationGuard:    mutationGuard,
 		eventCh:          make(chan agentEventMsg, 64),
 		listContexts:    listContexts,
 		switchContext:   switchContext,
@@ -505,6 +507,9 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 	case "/approve":
 		if m.state.HasPendingPlan() {
 			plan := m.state.ApprovePlan()
+			if m.mutationGuard != nil {
+				m.mutationGuard.Allow()
+			}
 			cmds = append(cmds, tea.Println("Plan approved. Executing..."))
 			execPrompt := FormatExecutionPrompt(plan)
 			cmd := m.startAgent(execPrompt)
@@ -517,6 +522,9 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 	case "/abort", "/reject":
 		if m.state.HasPendingPlan() {
 			m.state.RejectPlan()
+			if m.mutationGuard != nil {
+				m.mutationGuard.Block()
+			}
 			cmds = append(cmds, tea.Println("Plan rejected."))
 				} else {
 			cmds = append(cmds, tea.Println("No pending plan to reject."))
@@ -728,6 +736,15 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 			m.agentBusy = false
 			m.agentCancel = nil
 			m.state.PendingClarification = nil // clear stale clarification from partial run
+			// If we were executing an approved plan, re-block mutations and
+			// reset to planning mode so the user can't accidentally run
+			// mutating tools without a new plan.
+			if m.state.Mode == ModeExecuting {
+				m.state.Reset()
+				if m.mutationGuard != nil {
+					m.mutationGuard.Block()
+				}
+			}
 			cmds = append(cmds, m.textarea.Focus())
 			cmds = append(cmds, tea.Println(fmt.Sprintf("Error: %v", msg.err)))
 			return m, tea.Batch(cmds...)
@@ -762,6 +779,9 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 		// After plan execution, reset if no new plan was proposed
 		if m.state.Mode == ModeExecuting && !m.state.HasPendingPlan() {
 			m.state.Reset()
+			if m.mutationGuard != nil {
+				m.mutationGuard.Block()
+			}
 		}
 
 			return m, tea.Batch(cmds...)
@@ -1013,6 +1033,9 @@ func (m model) handleContextSwitch(msg contextSwitchMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.result.DriftScanFunc != nil {
 		m.driftScan = msg.result.DriftScanFunc
+	}
+	if msg.result.MutationGuard != nil {
+		m.mutationGuard = msg.result.MutationGuard
 	}
 	m.contextName = msg.result.ContextName
 
