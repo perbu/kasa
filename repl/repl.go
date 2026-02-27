@@ -181,6 +181,14 @@ func (r *REPL) runAgentSync(ctx context.Context, state *SessionState, prompt str
 				}
 			}
 
+			// Direct display of read-only tool responses
+			for _, tr := range ev.ToolResponses {
+				if rendered, ok := FormatDirectDisplay(tr.Name, tr.Response, 80); ok {
+					status.ClearForOutput()
+					fmt.Print(rendered)
+				}
+			}
+
 			for _, text := range ev.TextParts {
 				status.ClearForOutput()
 				if mdRenderer != nil {

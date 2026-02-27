@@ -9,13 +9,19 @@ type ToolCallInfo struct {
 	Args   map[string]any
 }
 
+// ToolResponseInfo holds a function response name and its data.
+type ToolResponseInfo struct {
+	Name     string
+	Response map[string]any
+}
+
 // EventResult holds the extracted information from processing event content parts.
 type EventResult struct {
 	Plan          *Plan
 	Clarification *Clarification
 	TextParts     []string
 	ToolCalls     []ToolCallInfo
-	ToolResponses []string // names of function responses
+	ToolResponses []ToolResponseInfo
 }
 
 // ProcessEventParts extracts plan, clarification, text, and tool call info from event content parts.
@@ -46,7 +52,10 @@ func ProcessEventParts(parts []*genai.Part) *EventResult {
 		}
 
 		if part.FunctionResponse != nil {
-			result.ToolResponses = append(result.ToolResponses, part.FunctionResponse.Name)
+			result.ToolResponses = append(result.ToolResponses, ToolResponseInfo{
+				Name:     part.FunctionResponse.Name,
+				Response: part.FunctionResponse.Response,
+			})
 		}
 
 		if part.Text != "" {

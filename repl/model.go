@@ -800,7 +800,7 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 			m.toolReason = tc.Reason
 			m.statusText = ""
 
-			if line := formatToolCallLine(tc, m.width); line != "" {
+			if line := formatToolCallLine(tc, m.width, m.state.Mode == ModeExecuting); line != "" {
 				cmds = append(cmds, tea.Println(line))
 			}
 		}
@@ -825,6 +825,13 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 			if m.directIO != nil {
 				for _, line := range m.directIO.Drain() {
 					rendered := renderDirectOutput(line, m.width)
+					cmds = append(cmds, tea.Println(rendered))
+				}
+			}
+
+			// Direct display of read-only tool responses
+			for _, tr := range ev.ToolResponses {
+				if rendered, ok := FormatDirectDisplay(tr.Name, tr.Response, m.width); ok {
 					cmds = append(cmds, tea.Println(rendered))
 				}
 			}
@@ -1445,18 +1452,24 @@ func formatDebugLines(event *session.Event) []string {
 // formatToolCallLine returns a styled one-liner for a tool call, or "" if
 // the tool has its own dedicated rendering (plan, clarification).
 // width is the terminal width used for truncation (0 means no truncation).
-func formatToolCallLine(tc ToolCallInfo, width int) string {
+// When executing is true (plan execution), args are omitted since the plan
+// already showed what each tool will do.
+func formatToolCallLine(tc ToolCallInfo, width int, executing bool) string {
 	switch tc.Name {
 	case "propose_plan", "ask_clarification":
 		return ""
 	}
 
-	argStr := formatToolArgs(tc.Args)
 	var line string
-	if argStr != "" {
-		line = fmt.Sprintf("  ⎿ %s (%s)", tc.Name, argStr)
-	} else {
+	if executing {
 		line = fmt.Sprintf("  ⎿ %s", tc.Name)
+	} else {
+		argStr := formatToolArgs(tc.Args)
+		if argStr != "" {
+			line = fmt.Sprintf("  ⎿ %s (%s)", tc.Name, argStr)
+		} else {
+			line = fmt.Sprintf("  ⎿ %s", tc.Name)
+		}
 	}
 
 	if width > 0 {

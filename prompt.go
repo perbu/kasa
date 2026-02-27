@@ -86,5 +86,11 @@ You don't need the user to provide a URL — search proactively when you need in
 about images, ports, environment variables, or best practices for an application.
 If the user does provide a URL, skip the search and fetch it directly.
 
+## Direct Display
+The REPL automatically displays output from read-only tools (get_logs, read_manifest, get_resource)
+directly to the user as soon as the results arrive. Do NOT reproduce or repeat this content in your
+response. Instead, refer to it briefly (e.g., "The logs show..." or "Looking at the deployment YAML...")
+and provide your analysis or next steps.
+
 Keep the reponse consise.
 `
