@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"strings"
 	"testing"
 
 	"google.golang.org/adk/model"
@@ -198,10 +199,123 @@ func TestGuardBlocksAllMutatingToolsInKubeTools(t *testing.T) {
 		// may fail due to missing K8s resources, which is fine.
 		result, _ := ct.Run(nil, map[string]any{})
 		errMsg, _ := result["error"].(string)
-		if errMsg != "" && errMsg == "BLOCKED: This tool modifies cluster state and requires plan approval. "+
-			"You MUST call propose_plan first with a description of what you intend to do "+
-			"and wait for user approval before executing any mutating tools." {
-			t.Errorf("tool %q: still blocked by guard after Allow()", tl.Name())
+		if strings.HasPrefix(errMsg, "BLOCKED:") {
+			t.Errorf("tool %q: still blocked by guard after Allow(): %s", tl.Name(), errMsg)
 		}
+	}
+}
+
+func TestGuardAllowsSpecificToolsOnly(t *testing.T) {
+	guard := NewMutationGuard()
+	counter := NewToolCallCounter(10)
+
+	allowed := &mockMutatingTool{name: "apply_resource"}
+	blocked := &mockMutatingTool{name: "delete_resource"}
+
+	ctAllowed := &countingTool{inner: allowed, counter: counter, guard: guard}
+	ctBlocked := &countingTool{inner: blocked, counter: counter, guard: guard}
+
+	// Approve only apply_resource
+	guard.AllowTools([]string{"apply_resource"})
+
+	// Allowed tool should execute
+	result, err := ctAllowed.Run(nil, map[string]any{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !allowed.called {
+		t.Fatal("apply_resource should have been called")
+	}
+	if result["result"] != "executed" {
+		t.Errorf("expected 'executed', got: %v", result)
+	}
+
+	// Non-listed tool should be blocked
+	result, err = ctBlocked.Run(nil, map[string]any{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if blocked.called {
+		t.Fatal("delete_resource should NOT have been called")
+	}
+	errMsg, ok := result["error"].(string)
+	if !ok || !strings.Contains(errMsg, "not part of the approved plan") {
+		t.Fatalf("expected 'not part of the approved plan' error, got: %v", result)
+	}
+}
+
+func TestGuardAllowToolsNilPermitsAll(t *testing.T) {
+	guard := NewMutationGuard()
+	counter := NewToolCallCounter(10)
+
+	tool1 := &mockMutatingTool{name: "apply_resource"}
+	tool2 := &mockMutatingTool{name: "delete_resource"}
+
+	ct1 := &countingTool{inner: tool1, counter: counter, guard: guard}
+	ct2 := &countingTool{inner: tool2, counter: counter, guard: guard}
+
+	// AllowTools(nil) = unrestricted
+	guard.AllowTools(nil)
+
+	if _, err := ct1.Run(nil, map[string]any{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, err := ct2.Run(nil, map[string]any{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !tool1.called || !tool2.called {
+		t.Fatal("AllowTools(nil) should permit all mutating tools")
+	}
+}
+
+func TestGuardBlockClearsAllowedSet(t *testing.T) {
+	guard := NewMutationGuard()
+
+	guard.AllowTools([]string{"apply_resource"})
+	if guard.IsBlocked() {
+		t.Fatal("guard should not be blocked after AllowTools")
+	}
+
+	guard.Block()
+	if !guard.IsBlocked() {
+		t.Fatal("guard should be blocked after Block()")
+	}
+
+	// After Block(), even previously-allowed tools should be blocked
+	err := guard.CheckAccess("apply_resource")
+	if err == nil {
+		t.Fatal("expected error after Block()")
+	}
+	if !strings.Contains(err.Error(), "requires plan approval") {
+		t.Errorf("expected 'requires plan approval' error, got: %s", err)
+	}
+}
+
+func TestCheckAccessDistinctErrors(t *testing.T) {
+	guard := NewMutationGuard()
+
+	// Blocked state: "requires plan approval"
+	err := guard.CheckAccess("apply_resource")
+	if err == nil {
+		t.Fatal("expected error when blocked")
+	}
+	if !strings.Contains(err.Error(), "requires plan approval") {
+		t.Errorf("expected 'requires plan approval', got: %s", err)
+	}
+
+	// Allowed with restriction: unlisted tool gets "not part of the approved plan"
+	guard.AllowTools([]string{"apply_resource"})
+	err = guard.CheckAccess("delete_resource")
+	if err == nil {
+		t.Fatal("expected error for unlisted tool")
+	}
+	if !strings.Contains(err.Error(), "not part of the approved plan") {
+		t.Errorf("expected 'not part of the approved plan', got: %s", err)
+	}
+
+	// Listed tool: no error
+	err = guard.CheckAccess("apply_resource")
+	if err != nil {
+		t.Errorf("expected no error for listed tool, got: %s", err)
 	}
 }

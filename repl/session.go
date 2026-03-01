@@ -23,6 +23,20 @@ type Plan struct {
 	Actions     []PlannedAction `json:"actions"`
 }
 
+// ToolNames returns the deduplicated list of tool names from the plan's actions,
+// preserving the order of first appearance. Empty tool names are skipped.
+func (p *Plan) ToolNames() []string {
+	seen := make(map[string]bool)
+	var names []string
+	for _, a := range p.Actions {
+		if a.Tool != "" && !seen[a.Tool] {
+			seen[a.Tool] = true
+			names = append(names, a.Tool)
+		}
+	}
+	return names
+}
+
 // IsValid returns true if the plan has a description and all actions have a tool name.
 func (p *Plan) IsValid() bool {
 	if p.Description == "" || len(p.Actions) == 0 {

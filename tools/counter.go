@@ -162,15 +162,14 @@ func (ct *countingTool) Declaration() *genai.FunctionDeclaration {
 }
 
 func (ct *countingTool) Run(ctx tool.Context, args any) (map[string]any, error) {
-	// Enforce mutation guard: block mutating tools when no plan is approved.
-	// This is the code-level enforcement that prevents the LLM from bypassing
-	// the plan/approval workflow. The guard is toggled by the REPL.
-	if ct.guard != nil && ct.guard.IsBlocked() && ct.inner.Category() == CategoryMutating {
-		return map[string]any{
-			"error": "BLOCKED: This tool modifies cluster state and requires plan approval. " +
-				"You MUST call propose_plan first with a description of what you intend to do " +
-				"and wait for user approval before executing any mutating tools.",
-		}, nil
+	// Enforce mutation guard: block mutating tools when no plan is approved,
+	// or when the tool is not in the approved plan. This is the code-level
+	// enforcement that prevents the LLM from bypassing the plan/approval
+	// workflow. The guard is toggled by the REPL.
+	if ct.guard != nil && ct.inner.Category() == CategoryMutating {
+		if err := ct.guard.CheckAccess(ct.inner.Name()); err != nil {
+			return map[string]any{"error": err.Error()}, nil
+		}
 	}
 
 	count := ct.counter.Increment(ct.inner.Name())

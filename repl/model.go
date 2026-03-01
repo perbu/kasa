@@ -508,7 +508,7 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 		if m.state.HasPendingPlan() {
 			plan := m.state.ApprovePlan()
 			if m.mutationGuard != nil {
-				m.mutationGuard.Allow()
+				m.mutationGuard.AllowTools(plan.ToolNames())
 			}
 			cmds = append(cmds, tea.Println("Plan approved. Executing..."))
 			execPrompt := FormatExecutionPrompt(plan)
