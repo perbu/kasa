@@ -130,7 +130,7 @@ func main() {
 	var scanResults *tools.DriftScanResults
 	if isInteractive {
 		progress := func(current, total int, namespace, name, kind string) {
-			fmt.Fprintf(os.Stderr, "\rDrift scan: checking %s/%s/%s (%d/%d)...", namespace, name, kind, current+1, total)
+			fmt.Fprintf(os.Stderr, "\r\033[KDrift scan: checking %s/%s/%s (%d/%d)...", namespace, name, kind, current+1, total)
 		}
 		scanResults, err = tools.RunDriftScan(ctx, dynamicClient, manifestMgr, progress)
 		fmt.Fprintf(os.Stderr, "\r\033[K")
