@@ -91,33 +91,6 @@ func TestReset(t *testing.T) {
 	}
 }
 
-func TestPlanToolNames(t *testing.T) {
-	plan := &Plan{
-		Description: "deploy nginx",
-		Actions: []PlannedAction{
-			{Tool: "apply_resource", Reason: "create deployment"},
-			{Tool: "apply_resource", Reason: "create service"}, // duplicate
-			{Tool: "commit_manifests", Reason: "save to git"},
-			{Tool: "", Reason: "empty tool name"}, // should be skipped
-		},
-	}
-	names := plan.ToolNames()
-	if len(names) != 2 {
-		t.Fatalf("expected 2 unique tool names, got %d: %v", len(names), names)
-	}
-	if names[0] != "apply_resource" || names[1] != "commit_manifests" {
-		t.Errorf("unexpected tool names: %v", names)
-	}
-}
-
-func TestPlanToolNamesEmpty(t *testing.T) {
-	plan := &Plan{Description: "empty plan"}
-	names := plan.ToolNames()
-	if len(names) != 0 {
-		t.Fatalf("expected 0 tool names for empty plan, got %d: %v", len(names), names)
-	}
-}
-
 func TestSetPendingClarification(t *testing.T) {
 	s := NewSessionState()
 	c := &Clarification{

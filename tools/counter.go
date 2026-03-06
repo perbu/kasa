@@ -163,11 +163,12 @@ func (ct *countingTool) Declaration() *genai.FunctionDeclaration {
 
 func (ct *countingTool) Run(ctx tool.Context, args any) (map[string]any, error) {
 	// Enforce mutation guard: block mutating tools when no plan is approved,
-	// or when the tool is not in the approved plan. This is the code-level
+	// or when the tool doesn't match an approved action. This is the code-level
 	// enforcement that prevents the LLM from bypassing the plan/approval
 	// workflow. The guard is toggled by the REPL.
 	if ct.guard != nil && ct.inner.Category() == CategoryMutating {
-		if err := ct.guard.CheckAccess(ct.inner.Name()); err != nil {
+		argsMap, _ := args.(map[string]any)
+		if err := ct.guard.CheckAccess(ct.inner.Name(), argsMap); err != nil {
 			return map[string]any{"error": err.Error()}, nil
 		}
 	}

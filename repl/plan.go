@@ -323,6 +323,11 @@ func FormatExecutionPrompt(plan *Plan) string {
 		sb.WriteString(fmt.Sprintf("(Reason: %s)\n", action.Reason))
 	}
 
-	sb.WriteString("\nExecute these actions in order. Proceed directly with the mutating tools. If any action fails and you need to retry with different parameters, call propose_plan again with a revised plan.")
+	sb.WriteString("\nExecute these actions in order. Proceed directly with the mutating tools.")
+	sb.WriteString("\n\nIMPORTANT: The execution guard enforces this plan strictly:")
+	sb.WriteString("\n- Each action can only be executed ONCE (call count is tracked)")
+	sb.WriteString("\n- Targeting parameters (namespace, name, app, kind, type) must match exactly")
+	sb.WriteString("\n- Tools not listed above will be blocked")
+	sb.WriteString("\nIf you need to deviate from the plan, call propose_plan with a revised plan.")
 	return sb.String()
 }
