@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/glamour"
 	"github.com/perbu/kasa/manifest"
 	"github.com/perbu/kasa/openaimodel"
 	"github.com/perbu/kasa/repl"
@@ -340,9 +339,11 @@ func main() {
 	// Interactive REPL mode - print fancy welcome
 	replInstance.PrintWelcome(strings.TrimSpace(version), cfg.Agent.Model, len(kubeTools.All()), manifestMgr.BaseDir(), cfg.Deployments.Remote)
 
-	// Display drift scan results to the user
+	// Display drift scan summary (full report available via /drift)
 	if scanResults != nil {
-		printDriftScanResults(scanResults)
+		if summary := tools.FormatDriftSummary(scanResults); summary != "" {
+			fmt.Println(summary)
+		}
 	}
 
 	// Run the REPL
@@ -440,30 +441,4 @@ func sortContextInfos(ctxs []repl.ContextInfo) {
 			}
 		}
 	}
-}
-
-// printDriftScanResults renders the drift scan results as a markdown table via glamour.
-func printDriftScanResults(results *tools.DriftScanResults) {
-	md := tools.FormatDriftScanResults(results)
-	if md == "" {
-		return
-	}
-
-	renderer, err := glamour.NewTermRenderer(
-		glamour.WithStandardStyle("dark"),
-		glamour.WithWordWrap(80),
-	)
-	if err != nil {
-		// Fallback to plain text
-		fmt.Print(md)
-		return
-	}
-
-	out, err := renderer.Render(md)
-	if err != nil {
-		fmt.Print(md)
-		return
-	}
-
-	fmt.Print(out)
 }

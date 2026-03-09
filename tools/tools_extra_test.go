@@ -1525,7 +1525,7 @@ func TestGetHelmValuesTool(t *testing.T) {
 // TestFormatDriftScanResults tests the FormatDriftScanResults function.
 func TestFormatDriftScanResults(t *testing.T) {
 	t.Run("empty results", func(t *testing.T) {
-		result := FormatDriftScanResults(&DriftScanResults{Total: 0})
+		result := FormatDriftScanResults(&DriftScanResults{Total: 0}, 80)
 		if result != "" {
 			t.Errorf("expected empty string for 0 total, got %q", result)
 		}
@@ -1535,7 +1535,7 @@ func TestFormatDriftScanResults(t *testing.T) {
 		result := FormatDriftScanResults(&DriftScanResults{
 			Total:  3,
 			InSync: 3,
-		})
+		}, 80)
 		if !containsSubstring(result, "all in sync") {
 			t.Errorf("expected 'all in sync', got %q", result)
 		}
@@ -1554,7 +1554,7 @@ func TestFormatDriftScanResults(t *testing.T) {
 				{Namespace: "default", Name: "app3", Kind: "service", Status: "missing"},
 				{Namespace: "default", Name: "app4", Kind: "configmap", Status: "error", Error: "timeout"},
 			},
-		})
+		}, 80)
 		if !containsSubstring(result, "OK") {
 			t.Error("expected OK for in_sync resource")
 		}
@@ -1568,6 +1568,28 @@ func TestFormatDriftScanResults(t *testing.T) {
 			t.Error("expected ERROR for error resource")
 		}
 	})
+}
+
+func TestEllipsize(t *testing.T) {
+	tests := []struct {
+		input  string
+		maxLen int
+		want   string
+	}{
+		{"short", 10, "short"},
+		{"exactly10!", 10, "exactly10!"},
+		{"hello world", 10, "hell…world"},
+		{"abcdefghijk", 5, "ab…jk"},
+		{"ab", 1, "…"},
+		{"", 10, ""},
+		{"anything", 0, "anything"},
+	}
+	for _, tt := range tests {
+		got := ellipsize(tt.input, tt.maxLen)
+		if got != tt.want {
+			t.Errorf("ellipsize(%q, %d) = %q, want %q", tt.input, tt.maxLen, got, tt.want)
+		}
+	}
 }
 
 // TestFormatDriftContext tests the FormatDriftContext function.

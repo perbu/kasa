@@ -1239,12 +1239,11 @@ func (m *model) driftAsync() tea.Cmd {
 			return cmdResultMsg{lines: []string{fmt.Sprintf("Drift scan failed: %v", err)}}
 		}
 
-		md := tools.FormatDriftScanResults(results)
-		if md == "" {
+		rendered := tools.FormatDriftScanResults(results, m.width)
+		if rendered == "" {
 			return cmdResultMsg{lines: []string{"No drift detected."}}
 		}
 
-		rendered := m.renderMarkdown(md)
 		return cmdResultMsg{lines: []string{rendered}}
 	}
 }

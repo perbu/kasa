@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/perbu/kasa/manifest"
 	"k8s.io/client-go/dynamic"
 )
@@ -81,35 +82,146 @@ func RunDriftScan(ctx context.Context, dynClient dynamic.Interface, mgr *manifes
 	return results, nil
 }
 
-// FormatDriftScanResults formats drift scan results as a markdown string.
-func FormatDriftScanResults(results *DriftScanResults) string {
-	if results.Total == 0 {
+// FormatDriftSummary returns a short one-line summary of drift scan results,
+// suitable for printing at startup. Returns "" when there are no results.
+func FormatDriftSummary(results *DriftScanResults) string {
+	if results == nil || results.Total == 0 {
 		return ""
 	}
 
 	if results.InSync == results.Total {
-		return fmt.Sprintf("**Drift scan:** %d manifests, all in sync\n", results.Total)
+		check := driftOKStyle.Render("✓")
+		return fmt.Sprintf("%s %s",
+			driftHeaderStyle.Render(fmt.Sprintf("Drift scan: %d manifests, all in sync", results.Total)),
+			check)
 	}
 
-	s := fmt.Sprintf("**Drift scan:** %d manifests\n\n", results.Total)
-	s += "| Resource | Status |\n"
-	s += "|----------|--------|\n"
+	parts := []string{}
+	if results.InSync > 0 {
+		parts = append(parts, driftOKStyle.Render(fmt.Sprintf("%d ok", results.InSync)))
+	}
+	if results.Drifted > 0 {
+		parts = append(parts, driftDriftedStyle.Render(fmt.Sprintf("%d drifted", results.Drifted)))
+	}
+	if results.Missing > 0 {
+		parts = append(parts, driftMissingStyle.Render(fmt.Sprintf("%d missing", results.Missing)))
+	}
+	if results.Errors > 0 {
+		parts = append(parts, driftErrorStyle.Render(fmt.Sprintf("%d errors", results.Errors)))
+	}
+
+	return fmt.Sprintf("%s %s — use %s for details",
+		driftHeaderStyle.Render(fmt.Sprintf("Drift scan: %d manifests:", results.Total)),
+		strings.Join(parts, ", "),
+		driftHeaderStyle.Render("/drift"))
+}
+
+// Styles for drift scan output.
+var (
+	driftHeaderStyle  = lipgloss.NewStyle().Bold(true)
+	driftOKStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("10")) // green
+	driftDriftedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("11")) // yellow
+	driftMissingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // red
+	driftErrorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
+	driftResourceDim  = lipgloss.NewStyle().Faint(true)
+)
+
+// ellipsize truncates s to maxLen, replacing the middle with "…" if needed.
+func ellipsize(s string, maxLen int) string {
+	if maxLen <= 0 || len(s) <= maxLen {
+		return s
+	}
+	if maxLen <= 1 {
+		return "…"
+	}
+	// Keep more of the end (kind/name) than the beginning (namespace).
+	headLen := (maxLen - 1) / 2
+	tailLen := maxLen - 1 - headLen
+	return s[:headLen] + "…" + s[len(s)-tailLen:]
+}
+
+// FormatDriftScanResults formats drift scan results as colored plain text.
+// width is the terminal width; pass 0 or negative for a default of 80.
+func FormatDriftScanResults(results *DriftScanResults, width int) string {
+	if results.Total == 0 {
+		return ""
+	}
+
+	if width <= 0 {
+		width = 80
+	}
+
+	if results.InSync == results.Total {
+		check := driftOKStyle.Render("✓")
+		return fmt.Sprintf("%s %s\n",
+			driftHeaderStyle.Render(fmt.Sprintf("Drift scan: %d manifests, all in sync", results.Total)),
+			check)
+	}
+
+	var sb strings.Builder
+	// Summary line
+	summary := fmt.Sprintf("Drift scan: %d manifests — %d ok, %d drifted, %d missing, %d errors",
+		results.Total, results.InSync, results.Drifted, results.Missing, results.Errors)
+	sb.WriteString(driftHeaderStyle.Render(summary))
+	sb.WriteString("\n\n")
+
+	// Determine the longest status string to calculate resource column width.
+	// Status strings: "OK", "DRIFTED (N fields)", "NOT IN CLUSTER", "ERROR: ..."
+	// Reserve space: 2 padding + max status width.
+	const minResourceWidth = 30
+	maxStatusWidth := 2 // "OK"
+	for _, r := range results.Results {
+		sw := statusDisplayWidth(r)
+		if sw > maxStatusWidth {
+			maxStatusWidth = sw
+		}
+	}
+	// resource column = width - indent(2) - gap(2) - status column - 1 (avoid terminal wrap)
+	resourceWidth := width - 5 - maxStatusWidth
+	if resourceWidth < minResourceWidth {
+		resourceWidth = minResourceWidth
+	}
 
 	for _, r := range results.Results {
 		resource := fmt.Sprintf("%s/%s/%s", r.Namespace, r.Name, r.Kind)
+		display := ellipsize(resource, resourceWidth)
+
+		// Pad resource to fixed width
+		padded := display + strings.Repeat(" ", max(0, resourceWidth-len(display)))
+
+		var status string
 		switch r.Status {
 		case "in_sync":
-			s += fmt.Sprintf("| %s | OK |\n", resource)
+			status = driftOKStyle.Render("OK")
 		case "drifted":
-			s += fmt.Sprintf("| %s | DRIFTED (%d fields) |\n", resource, len(r.Diffs))
+			status = driftDriftedStyle.Render(fmt.Sprintf("DRIFTED (%d fields)", len(r.Diffs)))
 		case "missing":
-			s += fmt.Sprintf("| %s | NOT IN CLUSTER |\n", resource)
+			status = driftMissingStyle.Render("NOT IN CLUSTER")
 		case "error":
-			s += fmt.Sprintf("| %s | ERROR: %s |\n", resource, r.Error)
+			errMsg := ellipsize(r.Error, maxStatusWidth-7) // "ERROR: " = 7
+			status = driftErrorStyle.Render("ERROR: " + errMsg)
 		}
+
+		sb.WriteString(fmt.Sprintf("  %s  %s\n", driftResourceDim.Render(padded), status))
 	}
 
-	return s
+	return sb.String()
+}
+
+// statusDisplayWidth returns the plain-text width of the status column for a result.
+func statusDisplayWidth(r DriftResult) int {
+	switch r.Status {
+	case "in_sync":
+		return 2 // "OK"
+	case "drifted":
+		return len(fmt.Sprintf("DRIFTED (%d fields)", len(r.Diffs)))
+	case "missing":
+		return 14 // "NOT IN CLUSTER"
+	case "error":
+		return min(7+len(r.Error), 40) // cap error text
+	default:
+		return 10
+	}
 }
 
 // FormatDriftContext formats drift scan results as plain text suitable for
