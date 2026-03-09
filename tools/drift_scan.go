@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/perbu/kasa/manifest"
 	"k8s.io/client-go/dynamic"
@@ -20,6 +21,21 @@ func RunDriftScan(ctx context.Context, dynClient dynamic.Interface, mgr *manifes
 	if err != nil {
 		return nil, err
 	}
+
+	if len(manifests) == 0 {
+		return nil, nil
+	}
+
+	// Filter out Secrets — the agent cannot access Secret data from the cluster,
+	// so comparing stored manifests against live state produces misleading results.
+	var filtered []manifest.ManifestInfo
+	for _, m := range manifests {
+		if strings.EqualFold(m.Type, "secret") {
+			continue
+		}
+		filtered = append(filtered, m)
+	}
+	manifests = filtered
 
 	if len(manifests) == 0 {
 		return nil, nil

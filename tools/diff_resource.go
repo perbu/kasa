@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/perbu/kasa/manifest"
 	"google.golang.org/adk/model"
@@ -96,6 +97,10 @@ func (t *DiffResourceTool) Run(ctx tool.Context, args any) (map[string]any, erro
 	resourceType, ok := argsMap["type"].(string)
 	if !ok || resourceType == "" {
 		return errorResult("type is required")
+	}
+
+	if strings.EqualFold(resourceType, "secret") {
+		return errorResult("secrets are excluded from drift analysis")
 	}
 
 	// Read stored manifest
