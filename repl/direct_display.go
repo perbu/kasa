@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"strings"
 
+	"charm.land/lipgloss/v2"
 	"sigs.k8s.io/yaml"
 )
 
-// DirectDisplayFormatter extracts a title and markdown body from a tool response.
+// DirectDisplayFormatter extracts a title and plain-text body from a tool response.
 // Returns ok=false if the response should not be directly displayed (e.g., errors).
 type DirectDisplayFormatter func(response map[string]any) (title, body string, ok bool)
 
@@ -18,9 +19,18 @@ var directDisplayFormatters = map[string]DirectDisplayFormatter{
 	"get_resource":  formatGetResource,
 }
 
+// directDisplayTitleStyle renders the bold title line above tool output.
+var directDisplayTitleStyle = lipgloss.NewStyle().Bold(true)
+
+// directDisplayBodyStyle renders the body content in a faint style.
+var directDisplayBodyStyle = lipgloss.NewStyle().Faint(true)
+
 // FormatDirectDisplay looks up a formatter for the given tool name and renders
-// the response as markdown. Returns the rendered string and true if the tool
-// has a formatter and the response was successfully formatted.
+// the response as styled plain text. Returns the rendered string and true if
+// the tool has a formatter and the response was successfully formatted.
+//
+// Uses lipgloss instead of glamour to avoid ANSI background sequences that
+// cause bubbletea to miscalculate view region height.
 func FormatDirectDisplay(name string, response map[string]any, width int) (string, bool) {
 	formatter, exists := directDisplayFormatters[name]
 	if !exists {
@@ -32,11 +42,14 @@ func FormatDirectDisplay(name string, response map[string]any, width int) (strin
 		return "", false
 	}
 
-	md := fmt.Sprintf("**%s**\n\n%s", title, body)
-	return renderMarkdownSimple(md), true
+	var sb strings.Builder
+	sb.WriteString(directDisplayTitleStyle.Render(title))
+	sb.WriteString("\n")
+	sb.WriteString(directDisplayBodyStyle.Render(body))
+	return sb.String(), true
 }
 
-// formatGetLogs formats get_logs output as a plain code block.
+// formatGetLogs formats get_logs output as plain text.
 func formatGetLogs(response map[string]any) (string, string, bool) {
 	if _, hasErr := response["error"]; hasErr {
 		return "", "", false
@@ -56,11 +69,10 @@ func formatGetLogs(response map[string]any) (string, string, bool) {
 		title += fmt.Sprintf(" (%s)", container)
 	}
 
-	body := fmt.Sprintf("```\n%s\n```", strings.TrimRight(logs, "\n"))
-	return title, body, true
+	return title, strings.TrimRight(logs, "\n"), true
 }
 
-// formatReadManifest formats read_manifest output as a YAML code block.
+// formatReadManifest formats read_manifest output as plain YAML text.
 func formatReadManifest(response map[string]any) (string, string, bool) {
 	if _, hasErr := response["error"]; hasErr {
 		return "", "", false
@@ -77,8 +89,7 @@ func formatReadManifest(response map[string]any) (string, string, bool) {
 		title = fmt.Sprintf("Manifest: %s", path)
 	}
 
-	body := fmt.Sprintf("```yaml\n%s\n```", strings.TrimRight(content, "\n"))
-	return title, body, true
+	return title, strings.TrimRight(content, "\n"), true
 }
 
 // formatGetResource formats get_resource output by serializing the resource map to YAML.
@@ -111,6 +122,5 @@ func formatGetResource(response map[string]any) (string, string, bool) {
 		return "", "", false
 	}
 
-	body := fmt.Sprintf("```yaml\n%s\n```", strings.TrimRight(string(yamlBytes), "\n"))
-	return title, body, true
+	return title, strings.TrimRight(string(yamlBytes), "\n"), true
 }
