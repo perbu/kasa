@@ -342,6 +342,6 @@ func renderMarkdownSimple(md string) string {
 	if err != nil {
 		return md
 	}
-	return out
+	return strings.TrimRight(out, "\n")
 }
 
