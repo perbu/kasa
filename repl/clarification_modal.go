@@ -207,6 +207,15 @@ func (m *clarificationModal) blurAllTextInputs() {
 // Update handles key messages for the modal.
 func (m clarificationModal) Update(msg tea.Msg) (clarificationModal, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.PasteMsg:
+		// Forward paste to the focused text input
+		qi, _ := m.cursorToQuestionOption()
+		if qi >= 0 && m.isTextQuestion(qi) {
+			var cmd tea.Cmd
+			m.textInputs[qi], cmd = m.textInputs[qi].Update(msg)
+			return m, cmd
+		}
+		return m, nil
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "esc":

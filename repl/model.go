@@ -262,6 +262,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.secretInput, cmd = m.secretInput.Update(msg)
 			return m, cmd
 		}
+		if m.showClarification {
+			var cmd tea.Cmd
+			m.clarModal, cmd = m.clarModal.Update(msg)
+			return m, cmd
+		}
 		if !m.agentBusy {
 			var cmd tea.Cmd
 			m.textarea, cmd = m.textarea.Update(msg)
