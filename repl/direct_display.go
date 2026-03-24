@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
-	"sigs.k8s.io/yaml"
 )
 
 // DirectDisplayFormatter extracts a title and plain-text body from a tool response.
@@ -16,7 +15,6 @@ type DirectDisplayFormatter func(response map[string]any) (title, body string, o
 var directDisplayFormatters = map[string]DirectDisplayFormatter{
 	"get_logs":      formatGetLogs,
 	"read_manifest": formatReadManifest,
-	"get_resource":  formatGetResource,
 }
 
 // directDisplayTitleStyle renders the bold title line above tool output.
@@ -92,35 +90,3 @@ func formatReadManifest(response map[string]any) (string, string, bool) {
 	return title, strings.TrimRight(content, "\n"), true
 }
 
-// formatGetResource formats get_resource output by serializing the resource map to YAML.
-func formatGetResource(response map[string]any) (string, string, bool) {
-	if _, hasErr := response["error"]; hasErr {
-		return "", "", false
-	}
-
-	resource, ok := response["resource"].(map[string]any)
-	if !ok || resource == nil {
-		return "", "", false
-	}
-
-	// Extract kind and name from metadata for the title
-	kind, _ := resource["kind"].(string)
-	name := ""
-	if metadata, ok := resource["metadata"].(map[string]any); ok {
-		name, _ = metadata["name"].(string)
-	}
-
-	title := "Resource"
-	if kind != "" && name != "" {
-		title = fmt.Sprintf("Resource: %s/%s", kind, name)
-	} else if kind != "" {
-		title = fmt.Sprintf("Resource: %s", kind)
-	}
-
-	yamlBytes, err := yaml.Marshal(resource)
-	if err != nil {
-		return "", "", false
-	}
-
-	return title, strings.TrimRight(string(yamlBytes), "\n"), true
-}

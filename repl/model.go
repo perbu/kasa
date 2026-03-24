@@ -1379,6 +1379,8 @@ func (m model) buildDividerLine() string {
 	var planStr string
 	if m.state.HasPendingPlan() {
 		planStr = planPendingStyle.Render("plan pending")
+	} else if m.state.ExecutingPlan != nil {
+		planStr = executingStyle.Render("executing plan")
 	} else {
 		planStr = noPlanStyle.Render("no plan")
 	}
@@ -1412,6 +1414,8 @@ func (m model) buildDividerLine() string {
 	parts = append(parts, planStr)
 	if m.state.HasPendingPlan() {
 		plainLen += len("plan pending")
+	} else if m.state.ExecutingPlan != nil {
+		plainLen += len("executing plan")
 	} else {
 		plainLen += len("no plan")
 	}

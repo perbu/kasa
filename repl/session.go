@@ -52,6 +52,7 @@ type Clarification struct {
 type SessionState struct {
 	Mode                 ExecutionMode
 	PendingPlan          *Plan
+	ExecutingPlan        *Plan
 	PendingClarification *Clarification
 }
 
@@ -75,6 +76,7 @@ func (s *SessionState) ApprovePlan() *Plan {
 	}
 	approved := s.PendingPlan
 	s.PendingPlan = nil
+	s.ExecutingPlan = approved
 	s.Mode = ModeExecuting
 	return approved
 }
@@ -93,5 +95,6 @@ func (s *SessionState) HasPendingPlan() bool {
 // Reset clears any pending plan and returns to planning mode.
 func (s *SessionState) Reset() {
 	s.PendingPlan = nil
+	s.ExecutingPlan = nil
 	s.Mode = ModePlanning
 }
