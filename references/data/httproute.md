@@ -18,6 +18,18 @@ HTTPRoute defines HTTP routing rules to backend services. It attaches to a Gatew
 | `rules[].backendRefs` | array | Target services |
 | `rules[].filters` | array | Request/response modifications |
 
+## parentRefs Fields
+
+Each entry in `parentRefs` supports these fields:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | yes | Name of the Gateway |
+| `namespace` | string | no | Namespace of the Gateway (defaults to route's namespace) |
+| `sectionName` | string | no | Name of a specific listener on the Gateway to attach to |
+
+**`sectionName` is critical when a Gateway has multiple listeners** (e.g., HTTP on port 80 and HTTPS on port 443). It must match the `name` field of a listener in the Gateway spec. Without `sectionName`, the route attaches to all compatible listeners.
+
 ## Basic HTTPRoute
 
 ```yaml
@@ -30,6 +42,71 @@ spec:
   parentRefs:
   - name: main-gateway
     namespace: gateway-system
+  hostnames:
+  - myapp.example.com
+  rules:
+  - backendRefs:
+    - name: myapp
+      port: 80
+```
+
+## Attaching to a Specific Listener (sectionName)
+
+When a Gateway has multiple listeners, use `sectionName` to target one:
+
+```yaml
+# Given a Gateway with listeners named "http" and "https":
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: myapp
+spec:
+  parentRefs:
+  - name: main-gateway
+    namespace: gateway-system
+    sectionName: https          # Attach only to the "https" listener
+  hostnames:
+  - myapp.example.com
+  rules:
+  - backendRefs:
+    - name: myapp
+      port: 80
+```
+
+## HTTP-to-HTTPS Redirect
+
+A common pattern: one HTTPRoute on the HTTP listener redirects to HTTPS, another on the HTTPS listener serves traffic.
+
+```yaml
+# Redirect HTTP -> HTTPS (attaches to "http" listener)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: myapp-redirect
+spec:
+  parentRefs:
+  - name: main-gateway
+    namespace: gateway-system
+    sectionName: http
+  hostnames:
+  - myapp.example.com
+  rules:
+  - filters:
+    - type: RequestRedirect
+      requestRedirect:
+        scheme: https
+        statusCode: 301
+---
+# Serve traffic on HTTPS (attaches to "https" listener)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: myapp
+spec:
+  parentRefs:
+  - name: main-gateway
+    namespace: gateway-system
+    sectionName: https
   hostnames:
   - myapp.example.com
   rules:
@@ -160,6 +237,8 @@ rules:
 ## Notes
 
 - Routes attach to Gateways; the Gateway must allow the route's namespace
+- Use `sectionName` in `parentRefs` to target a specific Gateway listener by name
+- Without `sectionName`, a route attaches to all listeners that match its protocol
 - If no matches specified, rule matches all requests
 - Rules are evaluated in order; first match wins
 - Multiple hostnames can be specified; route matches any of them
