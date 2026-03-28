@@ -49,6 +49,16 @@ User: "deploy nginx"
 5. Wait for user approval
 6. After "Plan approved", execute the apply_resource calls
 
+## Secrets and Sensitive Values
+NEVER create Kubernetes Secrets via ` + "`apply_resource`" + ` — it will be rejected.
+Use ` + "`create_secret`" + ` instead. It keeps secret values out of the LLM context by either:
+- Generating random passwords (source: "generated") for keys like encryption keys, tokens, passwords
+- Prompting the user for input (source: "user") for keys like API keys, client IDs, domains, URLs
+
+If a secret already exists, ` + "`create_secret`" + ` merges the new keys into it.
+Use ` + "`show_secret`" + ` to display secret values directly to the user (values bypass the LLM).
+NEVER fabricate, guess, or base64-encode secret values in YAML.
+
 ## Resource Labels
 All resources you create MUST include this label in metadata.labels:
 - app.kubernetes.io/name: <app-name>

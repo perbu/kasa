@@ -12,6 +12,7 @@ import (
 	"google.golang.org/adk/tool"
 	"google.golang.org/genai"
 	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -185,15 +186,40 @@ func (t *CreateSecretTool) Run(ctx tool.Context, args any) (map[string]any, erro
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	_, err = t.clientset.CoreV1().Secrets(namespace).Create(timeoutCtx, secret, metav1.CreateOptions{})
-	if err != nil {
-		return errorResultf("failed to create secret: %v", err)
+	// Try create first; on AlreadyExists, merge keys into the existing secret
+	var action string
+	_, createErr := t.clientset.CoreV1().Secrets(namespace).Create(timeoutCtx, secret, metav1.CreateOptions{})
+	if createErr == nil {
+		action = "created"
+	} else if !k8serrors.IsAlreadyExists(createErr) {
+		return errorResultf("failed to create secret: %v", createErr)
+	} else {
+		// Secret exists — fetch, merge keys, and update
+		existing, getErr := t.clientset.CoreV1().Secrets(namespace).Get(timeoutCtx, name, metav1.GetOptions{})
+		if getErr != nil {
+			return errorResultf("failed to get existing secret: %v", getErr)
+		}
+		if existing.Data == nil {
+			existing.Data = make(map[string][]byte)
+		}
+		for k, v := range data {
+			existing.Data[k] = v
+		}
+		// Only override secret type if explicitly provided; preserve existing type otherwise
+		if _, ok := argsMap["type"]; ok {
+			existing.Type = secretType
+		}
+		_, updateErr := t.clientset.CoreV1().Secrets(namespace).Update(timeoutCtx, existing, metav1.UpdateOptions{})
+		if updateErr != nil {
+			return errorResultf("failed to update secret: %v", updateErr)
+		}
+		action = "updated"
 	}
 
 	// Display generated passwords directly to the user (not to the LLM)
 	if len(generatedKeys) > 0 {
 		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("Secret '%s/%s' created. Generated values:\n\n", namespace, name))
+		sb.WriteString(fmt.Sprintf("Secret '%s/%s' %s. Generated values:\n\n", namespace, name, action))
 		for _, keyName := range generatedKeys {
 			sb.WriteString(fmt.Sprintf("  %-20s %s\n", keyName, string(data[keyName])))
 		}
@@ -201,7 +227,7 @@ func (t *CreateSecretTool) Run(ctx tool.Context, args any) (map[string]any, erro
 	}
 
 	return map[string]any{
-		"status":    "created",
+		"status":    action,
 		"name":      name,
 		"namespace": namespace,
 		"key_names": keyNames,

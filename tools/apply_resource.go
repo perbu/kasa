@@ -126,6 +126,11 @@ func (t *ApplyResourceTool) Run(ctx tool.Context, args any) (map[string]any, err
 		return errorResult("YAML must contain a 'kind' field")
 	}
 
+	// Reject Secrets — use create_secret instead to keep values out of the LLM context
+	if strings.EqualFold(gvk.Kind, "Secret") {
+		return errorResult("apply_resource cannot be used for Secrets. Use the create_secret tool instead, which keeps secret values out of the LLM context.")
+	}
+
 	// Convert GVK to GVR
 	gvr := GVKToGVR(gvk)
 
