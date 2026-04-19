@@ -35,9 +35,15 @@ deployments:
 credentials:
   # API key for the LLM provider (or set OPENROUTER_API_KEY env var)
   api_key: ""
-  # Base URL for the OpenAI-compatible API (default: https://openrouter.ai/api/v1)
-  # Change this to use a different provider (e.g., http://localhost:11434/v1 for Ollama)
-  # base_url: ""
+  # Base URL for the OpenAI-compatible API endpoint.
+  # Default: https://openrouter.ai/api/v1
+  # Examples for other providers:
+  #   https://api.openai.com/v1            - OpenAI
+  #   https://api.groq.com/openai/v1       - Groq
+  #   https://generativelanguage.googleapis.com/v1beta/openai  - Google Gemini (OpenAI-compat)
+  #   http://localhost:11434/v1            - Ollama (local)
+  #   http://localhost:8080/v1             - llama.cpp / LocalAI
+  base_url: "https://openrouter.ai/api/v1"
   # Legacy: Google API key (still works, api_key is preferred)
   # google_api_key: ""
   # Optional: Jina API key for web search and URL fetching (or set JINA_API_KEY env var)
