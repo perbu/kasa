@@ -173,15 +173,18 @@ func pruneToProposedYAML(liveYAML, proposedYAML string) string {
 }
 
 // pruneToProposed recursively removes keys from live that don't exist in
-// proposed. For nested maps it recurses; for slices of maps it matches by
-// index and recurses each pair.
+// proposed. For nested maps it recurses; for slices of maps it matches
+// elements semantically (by merge key) when possible, falling back to index.
+//
+// Proposed-only keys are *omitted* from the pruned-live result so they
+// surface as additions in the unified diff. Echoing them back (the previous
+// behaviour) silently hid real changes like `value` → `valueFrom`.
 func pruneToProposed(live, proposed map[string]any) map[string]any {
 	result := make(map[string]any, len(proposed))
 	for key, proposedVal := range proposed {
 		liveVal, ok := live[key]
 		if !ok {
-			// Key only in proposed — keep it so it shows as an addition in the diff.
-			result[key] = proposedVal
+			// Proposed-only — leave out so it appears as an addition in the diff.
 			continue
 		}
 
@@ -193,7 +196,7 @@ func pruneToProposed(live, proposed map[string]any) map[string]any {
 			continue
 		}
 
-		// Both sides are slices — recurse into map elements by index.
+		// Both sides are slices — align semantically and recurse into pairs.
 		pSlice, pIsSlice := proposedVal.([]any)
 		lSlice, lIsSlice := liveVal.([]any)
 		if pIsSlice && lIsSlice {
@@ -207,14 +210,74 @@ func pruneToProposed(live, proposed map[string]any) map[string]any {
 	return result
 }
 
-// pruneSlice matches slice elements by index. For map elements it recurses
-// via pruneToProposed; other element types are kept from live as-is.
+// mergeKeyCandidates lists the field names commonly used to identify
+// elements in Kubernetes-style lists of objects, in priority order. The
+// first candidate that uniquely identifies every element in a slice is used
+// to align it with its counterpart on the other side of the diff.
+var mergeKeyCandidates = []string{
+	"name",
+	"containerPort",
+	"port",
+	"mountPath",
+	"devicePath",
+	"topologyKey",
+	"key",
+}
+
+// findMergeKey returns the first candidate that every element in slice
+// carries as a scalar with values unique across the slice. Returns "" if no
+// candidate qualifies — the slice isn't safely mergeable by key.
+func findMergeKey(slice []any) string {
+	if len(slice) == 0 {
+		return ""
+	}
+	for _, cand := range mergeKeyCandidates {
+		if sliceHasUniqueScalarKey(slice, cand) {
+			return cand
+		}
+	}
+	return ""
+}
+
+// sliceHasUniqueScalarKey reports whether every element of slice is a map
+// containing key with a non-nil scalar value, and those values are unique
+// across the slice.
+func sliceHasUniqueScalarKey(slice []any, key string) bool {
+	seen := make(map[any]struct{}, len(slice))
+	for _, elem := range slice {
+		m, ok := elem.(map[string]any)
+		if !ok {
+			return false
+		}
+		v, has := m[key]
+		if !has || v == nil {
+			return false
+		}
+		switch v.(type) {
+		case map[string]any, []any:
+			return false
+		}
+		if _, dup := seen[v]; dup {
+			return false
+		}
+		seen[v] = struct{}{}
+	}
+	return true
+}
+
+// pruneSlice aligns live and proposed slices for diffing. When both slices
+// share a viable merge key it pairs elements by that key (so inserting a
+// new env var doesn't make every subsequent entry look "changed"); otherwise
+// it falls back to positional alignment.
 func pruneSlice(live, proposed []any) []any {
+	if key := findMergeKey(proposed); key != "" && findMergeKey(live) == key {
+		return pruneSliceByKey(live, proposed, key)
+	}
+
 	result := make([]any, 0, len(proposed))
 	for i, pElem := range proposed {
 		if i >= len(live) {
-			// Extra proposed element — keep it so it shows as an addition.
-			result = append(result, pElem)
+			// Proposed-only — omit so it appears as an addition in the diff.
 			continue
 		}
 		pMap, pIsMap := pElem.(map[string]any)
@@ -224,6 +287,42 @@ func pruneSlice(live, proposed []any) []any {
 		} else {
 			result = append(result, live[i])
 		}
+	}
+	return result
+}
+
+// pruneSliceByKey aligns live to proposed using mergeKey, recursively prunes
+// each matched pair, and returns the result in proposed order. Proposed-only
+// elements are omitted (they appear as additions in the diff); live-only
+// elements are omitted (consistent with how live-only fields are treated as
+// server-side defaults elsewhere).
+func pruneSliceByKey(live, proposed []any, mergeKey string) []any {
+	liveByKey := make(map[any]map[string]any, len(live))
+	for _, elem := range live {
+		m, ok := elem.(map[string]any)
+		if !ok {
+			continue
+		}
+		if k, has := m[mergeKey]; has {
+			liveByKey[k] = m
+		}
+	}
+
+	result := make([]any, 0, len(proposed))
+	for _, pElem := range proposed {
+		pMap, ok := pElem.(map[string]any)
+		if !ok {
+			continue
+		}
+		key, hasKey := pMap[mergeKey]
+		if !hasKey {
+			continue
+		}
+		lMap, found := liveByKey[key]
+		if !found {
+			continue
+		}
+		result = append(result, pruneToProposed(lMap, pMap))
 	}
 	return result
 }

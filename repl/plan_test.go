@@ -380,3 +380,170 @@ func TestRenderPlanNil(t *testing.T) {
 		t.Errorf("expected 'No plan' message, got %q", out)
 	}
 }
+
+// TestComputePlanDiffsAlignsEnvByName covers the case where the proposed YAML
+// inserts a new env var in the middle of the list. Without semantic alignment,
+// every subsequent entry pairs up with its neighbour and shows as "changed".
+func TestComputePlanDiffsAlignsEnvByName(t *testing.T) {
+	clusterYAML := `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nexus
+  namespace: portal
+spec:
+  template:
+    spec:
+      containers:
+      - name: nexus
+        image: nexus:1.0
+        env:
+        - name: PHOENIX_API_KEY
+          value: secret-key
+        - name: SALESFORCE_DOMAIN
+          value: varnish.my.salesforce.com
+        - name: ZEN_URL
+          value: https://zen.varnish-software.com/
+        - name: AUTH_MODE
+          value: headers
+`
+
+	proposedYAML := `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nexus
+  namespace: portal
+spec:
+  template:
+    spec:
+      containers:
+      - name: nexus
+        image: nexus:1.0
+        env:
+        - name: PHOENIX_API_KEY
+          value: secret-key
+        - name: PHOENIX_URL
+          value: http://phoenix.portal.svc.cluster.local:7080/
+        - name: SALESFORCE_DOMAIN
+          value: varnish.my.salesforce.com
+        - name: ZEN_URL
+          value: https://zen.varnish-software.com/
+        - name: AUTH_MODE
+          value: headers
+`
+
+	fetcher := func(string) (string, error) { return clusterYAML, nil }
+
+	plan := &Plan{
+		Description: "add PHOENIX_URL env var",
+		Actions: []PlannedAction{{
+			Tool:       "apply_resource",
+			Reason:     "add env var",
+			Parameters: map[string]any{"yaml": proposedYAML},
+		}},
+	}
+
+	diffs := computePlanDiffs(plan, fetcher)
+	diff, ok := diffs[0]
+	if !ok {
+		t.Fatal("expected a diff for action 0")
+	}
+
+	// The only real change is the inserted PHOENIX_URL entry: two `+` lines
+	// (name + value). Without semantic alignment we'd see a cascade where every
+	// later env name appears swapped with its neighbour.
+	if !strings.Contains(diff, "+        - name: PHOENIX_URL") {
+		t.Errorf("expected PHOENIX_URL to be shown as added, got:\n%s", diff)
+	}
+	if strings.Contains(diff, "-        - name: SALESFORCE_DOMAIN") {
+		t.Errorf("SALESFORCE_DOMAIN should not appear as removed (it is unchanged), got:\n%s", diff)
+	}
+	if strings.Contains(diff, "-        - name: ZEN_URL") {
+		t.Errorf("ZEN_URL should not appear as removed (it is unchanged), got:\n%s", diff)
+	}
+
+	// Inserting one env entry produces a handful of changed lines; before
+	// the merge-key alignment the cascade was 20+ on each side.
+	changed := 0
+	for line := range strings.SplitSeq(diff, "\n") {
+		if strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---") {
+			continue
+		}
+		if strings.HasPrefix(line, "+") || strings.HasPrefix(line, "-") {
+			changed++
+		}
+	}
+	if changed > 8 {
+		t.Errorf("expected small diff for a single inserted env var, got %d changed lines:\n%s", changed, diff)
+	}
+}
+
+// TestPruneToProposedDropsProposedOnlyKeys verifies that a key present only
+// in the proposed manifest is omitted from the pruned-live map. Echoing it
+// back used to silently hide the change.
+func TestPruneToProposedDropsProposedOnlyKeys(t *testing.T) {
+	live := map[string]any{"name": "X", "value": "literal"}
+	proposed := map[string]any{
+		"name": "X",
+		"valueFrom": map[string]any{
+			"secretKeyRef": map[string]any{"name": "s", "key": "X"},
+		},
+	}
+
+	pruned := pruneToProposed(live, proposed)
+	if _, has := pruned["valueFrom"]; has {
+		t.Errorf("valueFrom should be omitted from pruned-live so the diff shows it as added, got: %v", pruned)
+	}
+	if pruned["name"] != "X" {
+		t.Errorf("expected name preserved, got %v", pruned["name"])
+	}
+}
+
+func TestFindMergeKey(t *testing.T) {
+	cases := []struct {
+		name  string
+		slice []any
+		want  string
+	}{
+		{
+			name: "env vars match by name",
+			slice: []any{
+				map[string]any{"name": "A", "value": "1"},
+				map[string]any{"name": "B", "value": "2"},
+			},
+			want: "name",
+		},
+		{
+			name: "container ports match by containerPort when name is absent",
+			slice: []any{
+				map[string]any{"containerPort": float64(80)},
+				map[string]any{"containerPort": float64(443)},
+			},
+			want: "containerPort",
+		},
+		{
+			name: "duplicate names disqualify",
+			slice: []any{
+				map[string]any{"name": "A"},
+				map[string]any{"name": "A"},
+			},
+			want: "",
+		},
+		{
+			name:  "empty slice",
+			slice: []any{},
+			want:  "",
+		},
+		{
+			name:  "slice of scalars has no merge key",
+			slice: []any{"a", "b"},
+			want:  "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := findMergeKey(tc.slice); got != tc.want {
+				t.Errorf("findMergeKey: want %q, got %q", tc.want, got)
+			}
+		})
+	}
+}
