@@ -269,18 +269,29 @@ func sliceHasUniqueScalarKey(slice []any, key string) bool {
 // share a viable merge key it pairs elements by that key (so inserting a
 // new env var doesn't make every subsequent entry look "changed"); otherwise
 // it falls back to positional alignment.
+//
+// Live-only elements are preserved (and surface as removals in the diff) —
+// unlike live-only map *keys*, a missing slice element usually means the
+// user is deleting a managed item (env var, container, volume) rather than
+// trimming a server-side default.
 func pruneSlice(live, proposed []any) []any {
 	if key := findMergeKey(proposed); key != "" && findMergeKey(live) == key {
 		return pruneSliceByKey(live, proposed, key)
 	}
 
-	result := make([]any, 0, len(proposed))
-	for i, pElem := range proposed {
+	n := max(len(live), len(proposed))
+	result := make([]any, 0, n)
+	for i := range n {
 		if i >= len(live) {
 			// Proposed-only — omit so it appears as an addition in the diff.
 			continue
 		}
-		pMap, pIsMap := pElem.(map[string]any)
+		if i >= len(proposed) {
+			// Live-only — keep so it appears as a removal.
+			result = append(result, live[i])
+			continue
+		}
+		pMap, pIsMap := proposed[i].(map[string]any)
 		lMap, lIsMap := live[i].(map[string]any)
 		if pIsMap && lIsMap {
 			result = append(result, pruneToProposed(lMap, pMap))
@@ -291,35 +302,38 @@ func pruneSlice(live, proposed []any) []any {
 	return result
 }
 
-// pruneSliceByKey aligns live to proposed using mergeKey, recursively prunes
-// each matched pair, and returns the result in proposed order. Proposed-only
-// elements are omitted (they appear as additions in the diff); live-only
-// elements are omitted (consistent with how live-only fields are treated as
-// server-side defaults elsewhere).
+// pruneSliceByKey walks live in order; matched elements are recursively
+// pruned against their proposed counterparts, unmatched live elements are
+// kept as-is so they surface as removals. Iterating live (rather than
+// proposed) keeps removed items at their original position, producing a
+// minimal diff for renames and deletions.
 func pruneSliceByKey(live, proposed []any, mergeKey string) []any {
-	liveByKey := make(map[any]map[string]any, len(live))
-	for _, elem := range live {
+	proposedByKey := make(map[any]map[string]any, len(proposed))
+	for _, elem := range proposed {
 		m, ok := elem.(map[string]any)
 		if !ok {
 			continue
 		}
 		if k, has := m[mergeKey]; has {
-			liveByKey[k] = m
+			proposedByKey[k] = m
 		}
 	}
 
-	result := make([]any, 0, len(proposed))
-	for _, pElem := range proposed {
-		pMap, ok := pElem.(map[string]any)
+	result := make([]any, 0, len(live))
+	for _, lElem := range live {
+		lMap, ok := lElem.(map[string]any)
 		if !ok {
+			result = append(result, lElem)
 			continue
 		}
-		key, hasKey := pMap[mergeKey]
+		key, hasKey := lMap[mergeKey]
 		if !hasKey {
+			result = append(result, lMap)
 			continue
 		}
-		lMap, found := liveByKey[key]
+		pMap, found := proposedByKey[key]
 		if !found {
+			result = append(result, lMap)
 			continue
 		}
 		result = append(result, pruneToProposed(lMap, pMap))

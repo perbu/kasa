@@ -477,6 +477,72 @@ spec:
 	}
 }
 
+// TestComputePlanDiffsShowsEnvRename covers a rename: SALESFORCE_DOMAIN in
+// the cluster is replaced by SALESFORCE_BASE_URL in the proposed manifest.
+// The diff must show *both* sides — the old key being removed and the new
+// key being added — otherwise the user can't tell the old value is being
+// dropped.
+func TestComputePlanDiffsShowsEnvRename(t *testing.T) {
+	clusterYAML := `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nexus
+  namespace: portal
+spec:
+  template:
+    spec:
+      containers:
+      - name: nexus
+        image: nexus:1.0
+        env:
+        - name: PHOENIX_API_KEY
+          value: secret-key
+        - name: SALESFORCE_DOMAIN
+          value: varnish.my.salesforce.com
+        - name: ZEN_URL
+          value: https://zen.varnish-software.com/
+`
+
+	proposedYAML := `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nexus
+  namespace: portal
+spec:
+  template:
+    spec:
+      containers:
+      - name: nexus
+        image: nexus:1.0
+        env:
+        - name: PHOENIX_API_KEY
+          value: secret-key
+        - name: SALESFORCE_BASE_URL
+          value: varnish.my.salesforce.com
+        - name: ZEN_URL
+          value: https://zen.varnish-software.com/
+`
+
+	fetcher := func(string) (string, error) { return clusterYAML, nil }
+
+	plan := &Plan{
+		Description: "rename SALESFORCE_DOMAIN to SALESFORCE_BASE_URL",
+		Actions: []PlannedAction{{
+			Tool:       "apply_resource",
+			Reason:     "rename env var",
+			Parameters: map[string]any{"yaml": proposedYAML},
+		}},
+	}
+
+	diff := computePlanDiffs(plan, fetcher)[0]
+	if !strings.Contains(diff, "- name: SALESFORCE_DOMAIN") {
+		t.Errorf("rename should show SALESFORCE_DOMAIN removal, got:\n%s", diff)
+	}
+	if !strings.Contains(diff, "+        - name: SALESFORCE_BASE_URL") {
+		t.Errorf("rename should show SALESFORCE_BASE_URL addition, got:\n%s", diff)
+	}
+}
+
 // TestPruneToProposedDropsProposedOnlyKeys verifies that a key present only
 // in the proposed manifest is omitted from the pruned-live map. Echoing it
 // back used to silently hide the change.
