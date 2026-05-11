@@ -220,59 +220,30 @@ func TestGetString(t *testing.T) {
 	}
 }
 
-func TestNormalizeYAML(t *testing.T) {
-	// Same content, different key ordering
-	a := "apiVersion: v1\ndata:\n  key: value\nkind: ConfigMap\nmetadata:\n  name: test\n"
-	b := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test\ndata:\n  key: value\n"
-
-	na := normalizeYAML(a)
-	nb := normalizeYAML(b)
-	if na != nb {
-		t.Errorf("normalized YAML should match:\n--- a ---\n%s\n--- b ---\n%s", na, nb)
-	}
-}
-
-func TestComputePlanDiffsNormalizesKeyOrder(t *testing.T) {
-	// Cluster returns keys in alphabetical order (data before kind)
+func TestComputePlanDiffsIgnoresKeyOrder(t *testing.T) {
 	clusterYAML := "apiVersion: v1\ndata:\n  user.vcl: |\n    sub vcl_recv {\n    }\nkind: ConfigMap\nmetadata:\n  name: test\n  namespace: default\n"
-
-	// Proposed has conventional order (kind before metadata before data) + one new line
 	proposedYAML := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test\n  namespace: default\ndata:\n  user.vcl: |\n    sub vcl_recv {\n        return (synth(403));\n    }\n"
 
-	fetcher := func(yaml string) (string, error) {
-		return clusterYAML, nil
-	}
+	fetcher := func(string) (string, error) { return clusterYAML, nil }
 
 	plan := &Plan{
 		Description: "test",
-		Actions: []PlannedAction{
-			{
-				Tool:       "apply_resource",
-				Reason:     "update config",
-				Parameters: map[string]any{"yaml": proposedYAML},
-			},
-		},
+		Actions: []PlannedAction{{
+			Tool:       "apply_resource",
+			Reason:     "update config",
+			Parameters: map[string]any{"yaml": proposedYAML},
+		}},
 	}
 
-	diffs := computePlanDiffs(plan, fetcher)
-	diff, ok := diffs[0]
+	diff, ok := computePlanDiffs(plan, fetcher)[0]
 	if !ok {
 		t.Fatal("expected a diff for action 0")
 	}
-
-	// The diff should only show the actual content change, not key reordering.
-	// Count changed lines (starting with + or - but not --- or +++)
-	lines := strings.Split(diff, "\n")
-	changed := 0
-	for _, line := range lines {
-		if (strings.HasPrefix(line, "+") || strings.HasPrefix(line, "-")) &&
-			!strings.HasPrefix(line, "---") && !strings.HasPrefix(line, "+++") {
-			changed++
-		}
+	if !strings.Contains(diff, "return (synth(403))") {
+		t.Errorf("diff should mention the added content, got:\n%s", diff)
 	}
-	// Should be a small diff (the one added line + one removed line), not 30+ lines
-	if changed > 6 {
-		t.Errorf("diff has too many changed lines (%d), key reordering not normalized:\n%s", changed, diff)
+	if strings.Contains(diff, "apiVersion") || strings.Contains(diff, "kind: ConfigMap") {
+		t.Errorf("unchanged keys (apiVersion / kind) should not appear in diff, got:\n%s", diff)
 	}
 }
 
@@ -369,8 +340,8 @@ func TestBuildPlanMarkdownApplyManifestDiff(t *testing.T) {
 	if !strings.Contains(md, "Diff from current cluster state") {
 		t.Error("expected diff header for apply_manifest action")
 	}
-	if !strings.Contains(md, "```diff") {
-		t.Error("expected diff code block")
+	if !strings.Contains(md, "```") {
+		t.Error("expected code fence around diff")
 	}
 }
 
@@ -381,10 +352,11 @@ func TestRenderPlanNil(t *testing.T) {
 	}
 }
 
-// TestComputePlanDiffsAlignsEnvByName covers the case where the proposed YAML
-// inserts a new env var in the middle of the list. Without semantic alignment,
-// every subsequent entry pairs up with its neighbour and shows as "changed".
-func TestComputePlanDiffsAlignsEnvByName(t *testing.T) {
+// TestComputePlanDiffsInsertsEnvVarCleanly covers the case where the
+// proposed YAML inserts a new env var in the middle of the list. The dyff
+// HumanReport should describe it as a single list entry added, not a
+// cascade of "changes" across every later entry.
+func TestComputePlanDiffsInsertsEnvVarCleanly(t *testing.T) {
 	clusterYAML := `apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -448,32 +420,14 @@ spec:
 		t.Fatal("expected a diff for action 0")
 	}
 
-	// The only real change is the inserted PHOENIX_URL entry: two `+` lines
-	// (name + value). Without semantic alignment we'd see a cascade where every
-	// later env name appears swapped with its neighbour.
-	if !strings.Contains(diff, "+        - name: PHOENIX_URL") {
-		t.Errorf("expected PHOENIX_URL to be shown as added, got:\n%s", diff)
+	if !strings.Contains(diff, "PHOENIX_URL") {
+		t.Errorf("expected PHOENIX_URL to be reported as added, got:\n%s", diff)
 	}
-	if strings.Contains(diff, "-        - name: SALESFORCE_DOMAIN") {
-		t.Errorf("SALESFORCE_DOMAIN should not appear as removed (it is unchanged), got:\n%s", diff)
-	}
-	if strings.Contains(diff, "-        - name: ZEN_URL") {
-		t.Errorf("ZEN_URL should not appear as removed (it is unchanged), got:\n%s", diff)
-	}
-
-	// Inserting one env entry produces a handful of changed lines; before
-	// the merge-key alignment the cascade was 20+ on each side.
-	changed := 0
-	for line := range strings.SplitSeq(diff, "\n") {
-		if strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---") {
-			continue
+	// Unchanged env vars must not appear in the diff body.
+	for _, unchanged := range []string{"SALESFORCE_DOMAIN", "ZEN_URL", "AUTH_MODE", "PHOENIX_API_KEY"} {
+		if strings.Contains(diff, unchanged) {
+			t.Errorf("unchanged env var %s should not appear, got:\n%s", unchanged, diff)
 		}
-		if strings.HasPrefix(line, "+") || strings.HasPrefix(line, "-") {
-			changed++
-		}
-	}
-	if changed > 8 {
-		t.Errorf("expected small diff for a single inserted env var, got %d changed lines:\n%s", changed, diff)
 	}
 }
 
@@ -535,81 +489,16 @@ spec:
 	}
 
 	diff := computePlanDiffs(plan, fetcher)[0]
-	if !strings.Contains(diff, "- name: SALESFORCE_DOMAIN") {
-		t.Errorf("rename should show SALESFORCE_DOMAIN removal, got:\n%s", diff)
+	if !strings.Contains(diff, "SALESFORCE_DOMAIN") {
+		t.Errorf("rename should mention removed key SALESFORCE_DOMAIN, got:\n%s", diff)
 	}
-	if !strings.Contains(diff, "+        - name: SALESFORCE_BASE_URL") {
-		t.Errorf("rename should show SALESFORCE_BASE_URL addition, got:\n%s", diff)
+	if !strings.Contains(diff, "SALESFORCE_BASE_URL") {
+		t.Errorf("rename should mention added key SALESFORCE_BASE_URL, got:\n%s", diff)
 	}
-}
-
-// TestPruneToProposedDropsProposedOnlyKeys verifies that a key present only
-// in the proposed manifest is omitted from the pruned-live map. Echoing it
-// back used to silently hide the change.
-func TestPruneToProposedDropsProposedOnlyKeys(t *testing.T) {
-	live := map[string]any{"name": "X", "value": "literal"}
-	proposed := map[string]any{
-		"name": "X",
-		"valueFrom": map[string]any{
-			"secretKeyRef": map[string]any{"name": "s", "key": "X"},
-		},
+	if !strings.Contains(diff, "removed") {
+		t.Errorf("rename should describe a removal, got:\n%s", diff)
 	}
-
-	pruned := pruneToProposed(live, proposed)
-	if _, has := pruned["valueFrom"]; has {
-		t.Errorf("valueFrom should be omitted from pruned-live so the diff shows it as added, got: %v", pruned)
-	}
-	if pruned["name"] != "X" {
-		t.Errorf("expected name preserved, got %v", pruned["name"])
-	}
-}
-
-func TestFindMergeKey(t *testing.T) {
-	cases := []struct {
-		name  string
-		slice []any
-		want  string
-	}{
-		{
-			name: "env vars match by name",
-			slice: []any{
-				map[string]any{"name": "A", "value": "1"},
-				map[string]any{"name": "B", "value": "2"},
-			},
-			want: "name",
-		},
-		{
-			name: "container ports match by containerPort when name is absent",
-			slice: []any{
-				map[string]any{"containerPort": float64(80)},
-				map[string]any{"containerPort": float64(443)},
-			},
-			want: "containerPort",
-		},
-		{
-			name: "duplicate names disqualify",
-			slice: []any{
-				map[string]any{"name": "A"},
-				map[string]any{"name": "A"},
-			},
-			want: "",
-		},
-		{
-			name:  "empty slice",
-			slice: []any{},
-			want:  "",
-		},
-		{
-			name:  "slice of scalars has no merge key",
-			slice: []any{"a", "b"},
-			want:  "",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := findMergeKey(tc.slice); got != tc.want {
-				t.Errorf("findMergeKey: want %q, got %q", tc.want, got)
-			}
-		})
+	if !strings.Contains(diff, "added") {
+		t.Errorf("rename should describe an addition, got:\n%s", diff)
 	}
 }

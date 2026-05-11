@@ -3,9 +3,6 @@ package repl
 import (
 	"fmt"
 	"strings"
-
-	udiff "github.com/aymanbagabas/go-udiff"
-	sigsyaml "sigs.k8s.io/yaml"
 )
 
 // RenderPlan renders a plan to a string using glamour markdown rendering.
@@ -73,11 +70,10 @@ func buildPlanMarkdown(plan *Plan, diffs map[int]string) string {
 			}
 		}
 
-		// For apply_resource/apply_manifest actions, show diff from current cluster state if available
 		if action.Tool == "apply_resource" || action.Tool == "apply_manifest" {
 			if diff, ok := diffs[i]; ok && diff != "" {
 				md.WriteString("**Diff from current cluster state:**\n")
-				md.WriteString("```diff\n")
+				md.WriteString("```\n")
 				md.WriteString(diff)
 				if !strings.HasSuffix(diff, "\n") {
 					md.WriteString("\n")
@@ -92,9 +88,9 @@ func buildPlanMarkdown(plan *Plan, diffs map[int]string) string {
 	return md.String()
 }
 
-// computePlanDiffs computes unified diffs between the current cluster state and
-// the proposed YAML for each apply_resource or apply_manifest action in the plan.
-// Returns nil when fetcher is nil (no-op for non-interactive mode).
+// computePlanDiffs renders a dyff HumanReport between the current cluster
+// state and the proposed YAML for each apply_resource or apply_manifest
+// action in the plan. Returns nil when fetcher is nil (non-interactive mode).
 func computePlanDiffs(plan *Plan, fetcher ResourceFetcher, manifestReader ...ManifestReader) map[int]string {
 	if fetcher == nil || plan == nil {
 		return nil
@@ -141,219 +137,13 @@ func computePlanDiffs(plan *Plan, fetcher ResourceFetcher, manifestReader ...Man
 		if err != nil || existing == "" {
 			continue
 		}
-		// Prune server-side defaults from the live YAML so the diff only
-		// shows fields the user actually manages in their manifest.
-		prunedExisting := pruneToProposedYAML(existing, yamlContent)
-		diff := udiff.Unified("cluster", "proposed", normalizeYAML(prunedExisting), normalizeYAML(yamlContent))
-		if diff != "" {
-			diffs[i] = diff
+		diff, err := dyffDiff(existing, yamlContent)
+		if err != nil || diff == "" {
+			continue
 		}
+		diffs[i] = diff
 	}
 	return diffs
-}
-
-// pruneToProposedYAML parses both YAML strings into maps, prunes keys from
-// the live map that don't exist in the proposed map, and re-marshals the result.
-// This removes server-side defaults from the diff. Falls back to the original
-// live YAML on any parse error.
-func pruneToProposedYAML(liveYAML, proposedYAML string) string {
-	var liveMap, proposedMap map[string]any
-	if err := sigsyaml.Unmarshal([]byte(liveYAML), &liveMap); err != nil {
-		return liveYAML
-	}
-	if err := sigsyaml.Unmarshal([]byte(proposedYAML), &proposedMap); err != nil {
-		return liveYAML
-	}
-	pruned := pruneToProposed(liveMap, proposedMap)
-	out, err := sigsyaml.Marshal(pruned)
-	if err != nil {
-		return liveYAML
-	}
-	return string(out)
-}
-
-// pruneToProposed recursively removes keys from live that don't exist in
-// proposed. For nested maps it recurses; for slices of maps it matches
-// elements semantically (by merge key) when possible, falling back to index.
-//
-// Proposed-only keys are *omitted* from the pruned-live result so they
-// surface as additions in the unified diff. Echoing them back (the previous
-// behaviour) silently hid real changes like `value` → `valueFrom`.
-func pruneToProposed(live, proposed map[string]any) map[string]any {
-	result := make(map[string]any, len(proposed))
-	for key, proposedVal := range proposed {
-		liveVal, ok := live[key]
-		if !ok {
-			// Proposed-only — leave out so it appears as an addition in the diff.
-			continue
-		}
-
-		// Both sides are maps — recurse.
-		pMap, pIsMap := proposedVal.(map[string]any)
-		lMap, lIsMap := liveVal.(map[string]any)
-		if pIsMap && lIsMap {
-			result[key] = pruneToProposed(lMap, pMap)
-			continue
-		}
-
-		// Both sides are slices — align semantically and recurse into pairs.
-		pSlice, pIsSlice := proposedVal.([]any)
-		lSlice, lIsSlice := liveVal.([]any)
-		if pIsSlice && lIsSlice {
-			result[key] = pruneSlice(lSlice, pSlice)
-			continue
-		}
-
-		// Scalar or mismatched types — keep the live value as-is.
-		result[key] = liveVal
-	}
-	return result
-}
-
-// mergeKeyCandidates lists the field names commonly used to identify
-// elements in Kubernetes-style lists of objects, in priority order. The
-// first candidate that uniquely identifies every element in a slice is used
-// to align it with its counterpart on the other side of the diff.
-var mergeKeyCandidates = []string{
-	"name",
-	"containerPort",
-	"port",
-	"mountPath",
-	"devicePath",
-	"topologyKey",
-	"key",
-}
-
-// findMergeKey returns the first candidate that every element in slice
-// carries as a scalar with values unique across the slice. Returns "" if no
-// candidate qualifies — the slice isn't safely mergeable by key.
-func findMergeKey(slice []any) string {
-	if len(slice) == 0 {
-		return ""
-	}
-	for _, cand := range mergeKeyCandidates {
-		if sliceHasUniqueScalarKey(slice, cand) {
-			return cand
-		}
-	}
-	return ""
-}
-
-// sliceHasUniqueScalarKey reports whether every element of slice is a map
-// containing key with a non-nil scalar value, and those values are unique
-// across the slice.
-func sliceHasUniqueScalarKey(slice []any, key string) bool {
-	seen := make(map[any]struct{}, len(slice))
-	for _, elem := range slice {
-		m, ok := elem.(map[string]any)
-		if !ok {
-			return false
-		}
-		v, has := m[key]
-		if !has || v == nil {
-			return false
-		}
-		switch v.(type) {
-		case map[string]any, []any:
-			return false
-		}
-		if _, dup := seen[v]; dup {
-			return false
-		}
-		seen[v] = struct{}{}
-	}
-	return true
-}
-
-// pruneSlice aligns live and proposed slices for diffing. When both slices
-// share a viable merge key it pairs elements by that key (so inserting a
-// new env var doesn't make every subsequent entry look "changed"); otherwise
-// it falls back to positional alignment.
-//
-// Live-only elements are preserved (and surface as removals in the diff) —
-// unlike live-only map *keys*, a missing slice element usually means the
-// user is deleting a managed item (env var, container, volume) rather than
-// trimming a server-side default.
-func pruneSlice(live, proposed []any) []any {
-	if key := findMergeKey(proposed); key != "" && findMergeKey(live) == key {
-		return pruneSliceByKey(live, proposed, key)
-	}
-
-	n := max(len(live), len(proposed))
-	result := make([]any, 0, n)
-	for i := range n {
-		if i >= len(live) {
-			// Proposed-only — omit so it appears as an addition in the diff.
-			continue
-		}
-		if i >= len(proposed) {
-			// Live-only — keep so it appears as a removal.
-			result = append(result, live[i])
-			continue
-		}
-		pMap, pIsMap := proposed[i].(map[string]any)
-		lMap, lIsMap := live[i].(map[string]any)
-		if pIsMap && lIsMap {
-			result = append(result, pruneToProposed(lMap, pMap))
-		} else {
-			result = append(result, live[i])
-		}
-	}
-	return result
-}
-
-// pruneSliceByKey walks live in order; matched elements are recursively
-// pruned against their proposed counterparts, unmatched live elements are
-// kept as-is so they surface as removals. Iterating live (rather than
-// proposed) keeps removed items at their original position, producing a
-// minimal diff for renames and deletions.
-func pruneSliceByKey(live, proposed []any, mergeKey string) []any {
-	proposedByKey := make(map[any]map[string]any, len(proposed))
-	for _, elem := range proposed {
-		m, ok := elem.(map[string]any)
-		if !ok {
-			continue
-		}
-		if k, has := m[mergeKey]; has {
-			proposedByKey[k] = m
-		}
-	}
-
-	result := make([]any, 0, len(live))
-	for _, lElem := range live {
-		lMap, ok := lElem.(map[string]any)
-		if !ok {
-			result = append(result, lElem)
-			continue
-		}
-		key, hasKey := lMap[mergeKey]
-		if !hasKey {
-			result = append(result, lMap)
-			continue
-		}
-		pMap, found := proposedByKey[key]
-		if !found {
-			result = append(result, lMap)
-			continue
-		}
-		result = append(result, pruneToProposed(lMap, pMap))
-	}
-	return result
-}
-
-// normalizeYAML parses and re-marshals YAML so that key ordering is
-// consistent (alphabetical via sigs.k8s.io/yaml). This prevents
-// cosmetic key-reordering noise in diffs.
-func normalizeYAML(yamlStr string) string {
-	var m map[string]any
-	if err := sigsyaml.Unmarshal([]byte(yamlStr), &m); err != nil {
-		return yamlStr
-	}
-	out, err := sigsyaml.Marshal(m)
-	if err != nil {
-		return yamlStr
-	}
-	return string(out)
 }
 
 // formatParameters formats parameter map for display.
