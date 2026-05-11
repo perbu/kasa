@@ -173,25 +173,27 @@ func (m *Manager) stageFile(path string) error {
 
 // Commit creates a git commit with the given message.
 // Only commits if there are staged changes.
-func (m *Manager) Commit(message string) error {
+// Returns git's combined stdout/stderr alongside any error.
+func (m *Manager) Commit(message string) (string, error) {
 	// Check if there are staged changes
 	cmd := exec.Command("git", "diff", "--cached", "--quiet")
 	cmd.Dir = m.baseDir
 	if err := cmd.Run(); err == nil {
 		// No staged changes (exit code 0 means no differences)
-		return fmt.Errorf("no staged changes to commit")
+		return "", fmt.Errorf("no staged changes to commit")
 	}
 
 	// Create commit
 	cmd = exec.Command("git", "commit", "-m", message)
 	cmd.Dir = m.baseDir
 	output, err := cmd.CombinedOutput()
+	out := strings.TrimSpace(string(output))
 	if err != nil {
-		return fmt.Errorf("git commit failed: %w\nOutput: %s", err, string(output))
+		return out, fmt.Errorf("git commit failed: %w", err)
 	}
 
 	m.ClearChanges()
-	return nil
+	return out, nil
 }
 
 // GetStatus returns the git status scoped to the current context subdirectory.
@@ -430,35 +432,39 @@ func (m *Manager) HasRemote() bool {
 
 // Pull fetches and fast-forward merges from the remote.
 // If no remote is configured, this is a no-op.
+// Returns git's combined stdout/stderr alongside any error.
 // Returns an error if fast-forward is not possible (diverged history).
-func (m *Manager) Pull() error {
+func (m *Manager) Pull() (string, error) {
 	if !m.HasRemote() {
-		return nil
+		return "", nil
 	}
 
 	cmd := exec.Command("git", "pull", "--ff-only", "origin", "HEAD")
 	cmd.Dir = m.baseDir
 	output, err := cmd.CombinedOutput()
+	out := strings.TrimSpace(string(output))
 	if err != nil {
-		return fmt.Errorf("remote has diverged from local — resolve manually in %s\ngit output: %s", m.baseDir, strings.TrimSpace(string(output)))
+		return out, fmt.Errorf("remote has diverged from local — resolve manually in %s", m.baseDir)
 	}
-	return nil
+	return out, nil
 }
 
 // Push pushes the current branch to the remote.
 // If no remote is configured, this is a no-op.
-func (m *Manager) Push() error {
+// Returns git's combined stdout/stderr alongside any error.
+func (m *Manager) Push() (string, error) {
 	if !m.HasRemote() {
-		return nil
+		return "", nil
 	}
 
 	cmd := exec.Command("git", "push", "origin", "HEAD")
 	cmd.Dir = m.baseDir
 	output, err := cmd.CombinedOutput()
+	out := strings.TrimSpace(string(output))
 	if err != nil {
-		return fmt.Errorf("push failed — remote may have new changes, pull first\ngit output: %s", strings.TrimSpace(string(output)))
+		return out, fmt.Errorf("push failed — remote may have new changes, pull first")
 	}
-	return nil
+	return out, nil
 }
 
 // StagedChangeCount returns the number of staged files scoped to the current context.

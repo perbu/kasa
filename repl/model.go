@@ -1073,6 +1073,22 @@ func (m model) handleContextSwitch(msg contextSwitchMsg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+// prefixGitLines formats raw git output with a "git: " prefix per line, so it's
+// clearly attributed to git itself rather than to kasa. Returns a "(no output)"
+// placeholder when git was silent so the user knows the command ran.
+func prefixGitLines(out string) []string {
+	out = strings.TrimRight(out, "\n")
+	if out == "" {
+		return []string{"git: (no output)"}
+	}
+	raw := strings.Split(out, "\n")
+	lines := make([]string, len(raw))
+	for i, line := range raw {
+		lines[i] = "git: " + line
+	}
+	return lines
+}
+
 // handleCommit implements the /commit command.
 func (m model) handleCommit(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 	if m.manifest == nil {
@@ -1115,15 +1131,18 @@ func (m *model) commitAsync() tea.Cmd {
 			return cmdResultMsg{lines: []string{fmt.Sprintf("Failed to generate commit message: %v", err)}}
 		}
 
-		if err := m.manifest.Commit(commitMsg); err != nil {
-			return cmdResultMsg{lines: []string{fmt.Sprintf("Commit failed: %v", err)}}
+		gitOut, err := m.manifest.Commit(commitMsg)
+		lines := prefixGitLines(gitOut)
+		if err != nil {
+			lines = append(lines, fmt.Sprintf("Commit failed: %v", err))
+			return cmdResultMsg{lines: lines}
 		}
 
 		subject := commitMsg
 		if idx := strings.Index(commitMsg, "\n"); idx >= 0 {
 			subject = commitMsg[:idx]
 		}
-		lines := []string{fmt.Sprintf("Committed: %s", subject)}
+		lines = append(lines, fmt.Sprintf("Committed: %s", subject))
 		if m.manifest.HasRemote() {
 			lines = append(lines, "Push with /push when ready.")
 		}
@@ -1151,10 +1170,14 @@ func (m model) handlePull(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 
 	mfst := m.manifest
 	cmds = append(cmds, func() tea.Msg {
-		if err := mfst.Pull(); err != nil {
-			return cmdResultMsg{lines: []string{fmt.Sprintf("Pull failed: %v", err)}}
+		gitOut, err := mfst.Pull()
+		lines := prefixGitLines(gitOut)
+		if err != nil {
+			lines = append(lines, fmt.Sprintf("Pull failed: %v", err))
+			return cmdResultMsg{lines: lines}
 		}
-		return cmdResultMsg{lines: []string{"Pulled from remote."}}
+		lines = append(lines, "Pulled from remote.")
+		return cmdResultMsg{lines: lines}
 	}, m.wave.Tick())
 	return m, tea.Batch(cmds...)
 }
@@ -1179,10 +1202,14 @@ func (m model) handlePush(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 
 	mfst := m.manifest
 	cmds = append(cmds, func() tea.Msg {
-		if err := mfst.Push(); err != nil {
-			return cmdResultMsg{lines: []string{fmt.Sprintf("Push failed: %v", err)}}
+		gitOut, err := mfst.Push()
+		lines := prefixGitLines(gitOut)
+		if err != nil {
+			lines = append(lines, fmt.Sprintf("Push failed: %v", err))
+			return cmdResultMsg{lines: lines}
 		}
-		return cmdResultMsg{lines: []string{"Pushed to remote."}}
+		lines = append(lines, "Pushed to remote.")
+		return cmdResultMsg{lines: lines}
 	}, m.wave.Tick())
 	return m, tea.Batch(cmds...)
 }

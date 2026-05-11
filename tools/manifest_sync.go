@@ -65,7 +65,7 @@ func (t *SyncManifestsTool) Run(ctx tool.Context, args any) (map[string]any, err
 		}, nil
 	}
 
-	if err := t.manifest.Pull(); err != nil {
+	if _, err := t.manifest.Pull(); err != nil {
 		return map[string]any{
 			"success": false,
 			"error":   err.Error(),
