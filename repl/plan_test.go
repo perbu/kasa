@@ -224,7 +224,9 @@ func TestComputePlanDiffsIgnoresKeyOrder(t *testing.T) {
 	clusterYAML := "apiVersion: v1\ndata:\n  user.vcl: |\n    sub vcl_recv {\n    }\nkind: ConfigMap\nmetadata:\n  name: test\n  namespace: default\n"
 	proposedYAML := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test\n  namespace: default\ndata:\n  user.vcl: |\n    sub vcl_recv {\n        return (synth(403));\n    }\n"
 
-	fetcher := func(string) (string, error) { return clusterYAML, nil }
+	// Unit tests treat the dry-run apply as identity (projected == proposed)
+	// so they can assert pure dyff behavior without standing up a fake cluster.
+	fetcher := func(yamlContent string) (string, string, error) { return clusterYAML, yamlContent, nil }
 
 	plan := &Plan{
 		Description: "test",
@@ -254,8 +256,8 @@ func TestComputePlanDiffsApplyManifest(t *testing.T) {
 	// Cluster has image 0.3.9
 	clusterYAML := "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: activity\n  namespace: activity\nspec:\n  template:\n    spec:\n      containers:\n      - name: activity\n        image: activity:0.3.9\n"
 
-	fetcher := func(yaml string) (string, error) {
-		return clusterYAML, nil
+	fetcher := func(yamlContent string) (string, string, error) {
+		return clusterYAML, yamlContent, nil
 	}
 	manifestReader := func(namespace, app, resourceType string) (string, error) {
 		if namespace == "activity" && app == "activity" && resourceType == "deployment" {
@@ -290,8 +292,8 @@ func TestComputePlanDiffsApplyManifest(t *testing.T) {
 }
 
 func TestComputePlanDiffsApplyManifestNoReader(t *testing.T) {
-	fetcher := func(yaml string) (string, error) {
-		return "apiVersion: v1\nkind: ConfigMap\n", nil
+	fetcher := func(yamlContent string) (string, string, error) {
+		return "apiVersion: v1\nkind: ConfigMap\n", yamlContent, nil
 	}
 
 	plan := &Plan{
@@ -455,7 +457,7 @@ spec:
           value: headers
 `
 
-	fetcher := func(string) (string, error) { return clusterYAML, nil }
+	fetcher := func(yamlContent string) (string, string, error) { return clusterYAML, yamlContent, nil }
 
 	plan := &Plan{
 		Description: "add PHOENIX_URL env var",
@@ -529,7 +531,7 @@ spec:
           value: https://zen.varnish-software.com/
 `
 
-	fetcher := func(string) (string, error) { return clusterYAML, nil }
+	fetcher := func(yamlContent string) (string, string, error) { return clusterYAML, yamlContent, nil }
 
 	plan := &Plan{
 		Description: "rename SALESFORCE_DOMAIN to SALESFORCE_BASE_URL",
@@ -552,5 +554,97 @@ spec:
 	}
 	if !strings.Contains(diff, "added") {
 		t.Errorf("rename should describe an addition, got:\n%s", diff)
+	}
+}
+
+// TestComputePlanDiffsWashesOutServerDefaults proves the core point of the
+// dry-run-against-live model: fields that the cluster fills in by default
+// (and that a real server-side dry-run apply would re-fill in the projected
+// state) must NOT appear as "removed" in the diff. Only the user's actual
+// change should show up.
+func TestComputePlanDiffsWashesOutServerDefaults(t *testing.T) {
+	// Live state has server-defaulted fields the user never authored.
+	liveYAML := `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nexus
+  namespace: portal
+spec:
+  progressDeadlineSeconds: 600
+  revisionHistoryLimit: 10
+  template:
+    spec:
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      containers:
+      - name: nexus
+        image: ghcr.io/varnish/nexus:sha-old
+        terminationMessagePath: /dev/termination-log
+`
+
+	// Proposed YAML only sets what the user cares about.
+	proposedYAML := `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nexus
+  namespace: portal
+spec:
+  template:
+    spec:
+      containers:
+      - name: nexus
+        image: ghcr.io/varnish/nexus:sha-new
+`
+
+	// A real server-side dry-run apply would replay defaulting onto the
+	// projected state, restoring all the fields above. Simulate that by
+	// returning a projected YAML that matches live everywhere except the
+	// user's actual change.
+	projectedYAML := `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nexus
+  namespace: portal
+spec:
+  progressDeadlineSeconds: 600
+  revisionHistoryLimit: 10
+  template:
+    spec:
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      containers:
+      - name: nexus
+        image: ghcr.io/varnish/nexus:sha-new
+        terminationMessagePath: /dev/termination-log
+`
+
+	fetcher := func(string) (string, string, error) { return liveYAML, projectedYAML, nil }
+
+	plan := &Plan{
+		Description: "bump image",
+		Actions: []PlannedAction{{
+			Tool:       "apply_resource",
+			Reason:     "image update",
+			Parameters: map[string]any{"yaml": proposedYAML},
+		}},
+	}
+
+	diff, ok := computePlanDiffs(plan, fetcher)[0]
+	if !ok {
+		t.Fatal("expected a diff for action 0")
+	}
+	if !strings.Contains(diff, "sha-new") || !strings.Contains(diff, "sha-old") {
+		t.Errorf("diff should show the image change, got:\n%s", diff)
+	}
+	for _, defaulted := range []string{
+		"progressDeadlineSeconds",
+		"revisionHistoryLimit",
+		"dnsPolicy",
+		"restartPolicy",
+		"terminationMessagePath",
+	} {
+		if strings.Contains(diff, defaulted) {
+			t.Errorf("server-defaulted field %q should not appear in the diff, got:\n%s", defaulted, diff)
+		}
 	}
 }

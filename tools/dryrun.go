@@ -15,6 +15,64 @@ import (
 	"k8s.io/client-go/dynamic"
 )
 
+// DryRunApplyForDiff sends content to the cluster as a server-side dry-run
+// apply (Create when the resource is absent, Update when it already exists)
+// and returns the merged object the server would persist, after running it
+// through cleanForImport so the result is comparable to FetchAndCleanLiveResource.
+//
+// Used by the REPL plan-diff path to compute what an apply would actually
+// change in the cluster, sidestepping the noise of server-defaulted fields
+// that aren't present in the proposed YAML.
+func DryRunApplyForDiff(ctx context.Context, dynClient dynamic.Interface, content []byte) (map[string]any, error) {
+	obj, err := ParseYAMLToUnstructured(content)
+	if err != nil {
+		return nil, fmt.Errorf("parsing YAML: %w", err)
+	}
+	ensureManagedByLabel(obj)
+
+	gvk := obj.GroupVersionKind()
+	if gvk.Kind == "" {
+		return nil, fmt.Errorf("YAML missing 'kind'")
+	}
+	name := obj.GetName()
+	if name == "" {
+		return nil, fmt.Errorf("YAML missing metadata.name")
+	}
+
+	gvr := GVKToGVR(gvk)
+	objNamespace := obj.GetNamespace()
+	namespaced := IsNamespaced(gvk.Kind)
+	if namespaced && objNamespace == "" {
+		objNamespace = "default"
+		obj.SetNamespace(objNamespace)
+	}
+
+	resourceClient := namespacedClient(dynClient, gvr, objNamespace, namespaced)
+
+	dryRunCreate := metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}}
+	dryRunUpdate := metav1.UpdateOptions{DryRun: []string{metav1.DryRunAll}}
+
+	result, err := resourceClient.Create(ctx, obj, dryRunCreate)
+	if errors.IsAlreadyExists(err) {
+		existing, getErr := resourceClient.Get(ctx, name, metav1.GetOptions{})
+		if getErr != nil {
+			return nil, fmt.Errorf("getting existing resource: %w", getErr)
+		}
+		obj.SetResourceVersion(existing.GetResourceVersion())
+		if strings.EqualFold(gvk.Kind, "Service") {
+			preserveServiceFields(existing, obj)
+		}
+		result, err = resourceClient.Update(ctx, obj, dryRunUpdate)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	merged := result.Object
+	cleanForImport(merged)
+	return merged, nil
+}
+
 // DryRunApplyTool provides the dry_run_apply tool for the agent.
 type DryRunApplyTool struct {
 	dynamicClient dynamic.Interface

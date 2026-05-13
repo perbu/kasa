@@ -17,9 +17,17 @@ import (
 	"google.golang.org/genai"
 )
 
-// ResourceFetcher returns the current cluster state of a resource as clean YAML,
-// given the proposed YAML. Returns ("", nil) when the resource doesn't exist yet.
-type ResourceFetcher func(yamlContent string) (string, error)
+// ResourceFetcher returns the inputs needed to render a plan diff against the
+// current cluster state, given the proposed YAML:
+//
+//   - live is the current cluster object as clean YAML.
+//   - projected is the merged object a server-side dry-run apply of the
+//     proposed YAML would produce, also cleaned. Diffing live against
+//     projected (instead of against the raw proposed YAML) lets cluster-set
+//     defaults wash out so only changes the apply will actually cause appear.
+//
+// Returns ("", "", nil) when the resource doesn't exist yet (nothing to diff).
+type ResourceFetcher func(yamlContent string) (live, projected string, err error)
 
 // ManifestReader reads a stored manifest file and returns its YAML content.
 type ManifestReader func(namespace, app, resourceType string) (string, error)

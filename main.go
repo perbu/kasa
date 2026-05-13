@@ -200,13 +200,16 @@ func main() {
 	}
 
 	// makeResourceFetcher builds a ResourceFetcher closure for a given dynamic client.
-	// It parses the proposed YAML, fetches the live cluster resource, and returns
-	// clean YAML suitable for diffing. Returns ("", nil) for new resources.
+	// It fetches the live cluster resource and runs a server-side dry-run apply of
+	// the proposed YAML, returning both as clean YAML suitable for diffing.
+	// Diffing live against the dry-run result (rather than against the raw
+	// proposed YAML) lets cluster-set defaults wash out, so only changes the
+	// apply will actually cause appear. Returns ("", "", nil) for new resources.
 	makeResourceFetcher := func(dynClient dynamic.Interface) repl.ResourceFetcher {
-		return func(yamlContent string) (string, error) {
+		return func(yamlContent string) (string, string, error) {
 			var m map[string]any
 			if err := sigsyaml.Unmarshal([]byte(yamlContent), &m); err != nil {
-				return "", err
+				return "", "", err
 			}
 			kind, _ := m["kind"].(string)
 			apiVersion, _ := m["apiVersion"].(string)
@@ -216,22 +219,32 @@ func main() {
 				name, _ = meta["name"].(string)
 			}
 			if kind == "" || name == "" {
-				return "", nil
+				return "", "", nil
 			}
-			fetchCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			fetchCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			liveMap, err := tools.FetchAndCleanLiveResource(fetchCtx, dynClient, namespace, name, kind, apiVersion)
 			if err != nil {
 				if strings.Contains(err.Error(), "not found") {
-					return "", nil // new resource — no diff
+					return "", "", nil // new resource — no diff
 				}
-				return "", err
+				return "", "", err
 			}
-			yamlBytes, err := sigsyaml.Marshal(liveMap)
+			liveBytes, err := sigsyaml.Marshal(liveMap)
 			if err != nil {
-				return "", err
+				return "", "", err
 			}
-			return string(yamlBytes), nil
+			projectedMap, err := tools.DryRunApplyForDiff(fetchCtx, dynClient, []byte(yamlContent))
+			if err != nil {
+				// Fall back to the raw proposed YAML so the user at least sees
+				// a (noisier) diff rather than nothing when the dry-run fails.
+				return string(liveBytes), yamlContent, nil
+			}
+			projectedBytes, err := sigsyaml.Marshal(projectedMap)
+			if err != nil {
+				return "", "", err
+			}
+			return string(liveBytes), string(projectedBytes), nil
 		}
 	}
 

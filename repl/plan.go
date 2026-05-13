@@ -143,11 +143,11 @@ func computePlanDiffs(plan *Plan, fetcher ResourceFetcher, manifestReader ...Man
 			continue
 		}
 
-		existing, err := fetcher(yamlContent)
-		if err != nil || existing == "" {
+		existing, projected, err := fetcher(yamlContent)
+		if err != nil || existing == "" || projected == "" {
 			continue
 		}
-		diff, err := dyffDiff(existing, yamlContent)
+		diff, err := dyffDiff(existing, projected)
 		if err != nil || diff == "" {
 			continue
 		}
