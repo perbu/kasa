@@ -63,59 +63,6 @@ func TestFormatGetLogs(t *testing.T) {
 	})
 }
 
-func TestFormatReadManifest(t *testing.T) {
-	t.Run("valid manifest", func(t *testing.T) {
-		resp := map[string]any{
-			"content": "apiVersion: apps/v1\nkind: Deployment",
-			"path":    "default/nginx/deployment.yaml",
-		}
-		title, body, ok := formatReadManifest(resp)
-		if !ok {
-			t.Fatal("expected ok=true")
-		}
-		if title != "Manifest: default/nginx/deployment.yaml" {
-			t.Errorf("unexpected title: %s", title)
-		}
-		if body != "apiVersion: apps/v1\nkind: Deployment" {
-			t.Errorf("unexpected body: %s", body)
-		}
-	})
-
-	t.Run("error response", func(t *testing.T) {
-		resp := map[string]any{
-			"error": "manifest not found",
-		}
-		_, _, ok := formatReadManifest(resp)
-		if ok {
-			t.Fatal("expected ok=false for error response")
-		}
-	})
-
-	t.Run("empty content", func(t *testing.T) {
-		resp := map[string]any{
-			"content": "",
-			"path":    "some/path",
-		}
-		_, _, ok := formatReadManifest(resp)
-		if ok {
-			t.Fatal("expected ok=false for empty content")
-		}
-	})
-
-	t.Run("no path", func(t *testing.T) {
-		resp := map[string]any{
-			"content": "apiVersion: v1",
-		}
-		title, _, ok := formatReadManifest(resp)
-		if !ok {
-			t.Fatal("expected ok=true")
-		}
-		if title != "Manifest" {
-			t.Errorf("unexpected title: %s", title)
-		}
-	})
-}
-
 func TestFormatDirectDisplay(t *testing.T) {
 	t.Run("unknown tool", func(t *testing.T) {
 		_, ok := FormatDirectDisplay("list_pods", map[string]any{}, 80)

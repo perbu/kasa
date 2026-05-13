@@ -13,8 +13,7 @@ type DirectDisplayFormatter func(response map[string]any) (title, body string, o
 
 // directDisplayFormatters maps tool names to their display formatters.
 var directDisplayFormatters = map[string]DirectDisplayFormatter{
-	"get_logs":      formatGetLogs,
-	"read_manifest": formatReadManifest,
+	"get_logs": formatGetLogs,
 }
 
 // directDisplayTitleStyle renders the bold title line above tool output.
@@ -68,25 +67,5 @@ func formatGetLogs(response map[string]any) (string, string, bool) {
 	}
 
 	return title, strings.TrimRight(logs, "\n"), true
-}
-
-// formatReadManifest formats read_manifest output as plain YAML text.
-func formatReadManifest(response map[string]any) (string, string, bool) {
-	if _, hasErr := response["error"]; hasErr {
-		return "", "", false
-	}
-
-	content, ok := response["content"].(string)
-	if !ok || content == "" {
-		return "", "", false
-	}
-
-	path, _ := response["path"].(string)
-	title := "Manifest"
-	if path != "" {
-		title = fmt.Sprintf("Manifest: %s", path)
-	}
-
-	return title, strings.TrimRight(content, "\n"), true
 }
 
