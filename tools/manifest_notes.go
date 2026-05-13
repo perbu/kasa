@@ -26,7 +26,7 @@ func (t *SaveNotesTool) Name() string {
 
 // Description returns the tool description.
 func (t *SaveNotesTool) Description() string {
-	return "Save deployment notes (KASA.md) at the top-level, namespace-level, or app-level. Notes are automatically shown when reading or listing manifests."
+	return "Save deployment notes (KASA.md) at the cluster-level, namespace-level, or app-level. Notes are automatically shown when reading or listing manifests."
 }
 
 // IsLongRunning returns false as this is a quick operation.
@@ -54,7 +54,7 @@ func (t *SaveNotesTool) Declaration() *genai.FunctionDeclaration {
 			Properties: map[string]*genai.Schema{
 				"namespace": {
 					Type:        "string",
-					Description: "Kubernetes namespace (optional — omit for top-level notes)",
+					Description: "Kubernetes namespace (optional — omit for cluster-level notes)",
 				},
 				"app": {
 					Type:        "string",
