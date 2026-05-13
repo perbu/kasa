@@ -337,11 +337,63 @@ func TestBuildPlanMarkdownApplyManifestDiff(t *testing.T) {
 	}
 
 	md := buildPlanMarkdown(plan, diffs)
-	if !strings.Contains(md, "Diff from current cluster state") {
-		t.Error("expected diff header for apply_manifest action")
+	if !strings.Contains(md, "#### Diff from current cluster state") {
+		t.Error("expected h4 diff header for apply_manifest action")
 	}
 	if !strings.Contains(md, "```") {
 		t.Error("expected code fence around diff")
+	}
+}
+
+// When an apply_resource action has a diff, the proposed YAML is redundant
+// with the diff and should not appear in the rendered plan.
+func TestBuildPlanMarkdownApplyResourceDiffSuppressesYAML(t *testing.T) {
+	yamlBody := "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: nginx\nspec:\n  replicas: 3"
+	plan := &Plan{
+		Description: "Scale nginx",
+		Actions: []PlannedAction{{
+			Tool:       "apply_resource",
+			Reason:     "scale up",
+			Parameters: map[string]any{"yaml": yamlBody},
+		}},
+	}
+
+	diffs := map[int]string{0: "replicas changed from 1 to 3\n"}
+	md := buildPlanMarkdown(plan, diffs)
+
+	if strings.Contains(md, yamlBody) {
+		t.Errorf("yaml body should be suppressed when a diff is present, got:\n%s", md)
+	}
+	if strings.Contains(md, "**yaml:**") {
+		t.Error("yaml header should be suppressed when a diff is present")
+	}
+	if !strings.Contains(md, "#### Diff from current cluster state") {
+		t.Error("expected h4 diff header")
+	}
+	if !strings.Contains(md, "replicas changed from 1 to 3") {
+		t.Error("expected diff body to appear")
+	}
+}
+
+// When apply_resource has no diff (e.g. brand-new resource), the proposed
+// YAML must still be shown so the user can see what's being created.
+func TestBuildPlanMarkdownApplyResourceNoDiffShowsYAML(t *testing.T) {
+	yamlBody := "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: nginx"
+	plan := &Plan{
+		Description: "Create nginx",
+		Actions: []PlannedAction{{
+			Tool:       "apply_resource",
+			Reason:     "new deployment",
+			Parameters: map[string]any{"yaml": yamlBody},
+		}},
+	}
+
+	md := buildPlanMarkdown(plan, nil)
+	if !strings.Contains(md, yamlBody) {
+		t.Error("yaml body should be shown when no diff is available")
+	}
+	if strings.Contains(md, "Diff from current cluster state") {
+		t.Error("no diff header expected when there is no diff")
 	}
 }
 

@@ -32,6 +32,14 @@ func buildPlanMarkdown(plan *Plan, diffs map[int]string) string {
 		md.WriteString(fmt.Sprintf("### %d. `%s`\n\n", i+1, action.Tool))
 		md.WriteString(fmt.Sprintf("**Reason:** %s\n\n", action.Reason))
 
+		// When an apply_* action has a diff against the current cluster state,
+		// the diff alone conveys the change — showing the full proposed YAML
+		// next to it is noise.
+		diff := ""
+		if action.Tool == "apply_resource" || action.Tool == "apply_manifest" {
+			diff = diffs[i]
+		}
+
 		if len(action.Parameters) > 0 {
 			// Separate simple values from multi-line values
 			var simpleParams []struct{ key, value string }
@@ -58,8 +66,12 @@ func buildPlanMarkdown(plan *Plan, diffs map[int]string) string {
 				md.WriteString("\n")
 			}
 
-			// Show multi-line params in code blocks
+			// Show multi-line params in code blocks, suppressing `yaml` when
+			// a diff will be shown for this action.
 			for _, p := range multiLineParams {
+				if diff != "" && p.key == "yaml" {
+					continue
+				}
 				md.WriteString(fmt.Sprintf("**%s:**\n", p.key))
 				md.WriteString("```yaml\n")
 				md.WriteString(p.value)
@@ -70,16 +82,14 @@ func buildPlanMarkdown(plan *Plan, diffs map[int]string) string {
 			}
 		}
 
-		if action.Tool == "apply_resource" || action.Tool == "apply_manifest" {
-			if diff, ok := diffs[i]; ok && diff != "" {
-				md.WriteString("**Diff from current cluster state:**\n")
-				md.WriteString("```\n")
-				md.WriteString(diff)
-				if !strings.HasSuffix(diff, "\n") {
-					md.WriteString("\n")
-				}
-				md.WriteString("```\n\n")
+		if diff != "" {
+			md.WriteString("#### Diff from current cluster state\n\n")
+			md.WriteString("```\n")
+			md.WriteString(diff)
+			if !strings.HasSuffix(diff, "\n") {
+				md.WriteString("\n")
 			}
+			md.WriteString("```\n\n")
 		}
 	}
 
