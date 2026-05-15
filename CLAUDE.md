@@ -70,6 +70,7 @@ Tools are classified in `tools/tools.go`:
 - get_reference, check_deployment_health
 - list_manifests, read_manifest, dry_run_apply (supports inline YAML validation)
 - list_resources (generic, supports CRDs)
+- show_drift (returns cached or fresh drift scan results)
 
 **Mutating (require plan approval):**
 - delete_namespace, delete_resource, delete_manifest
@@ -267,6 +268,49 @@ deleted, _ := manager.DeleteManifest("default", "nginx", "deployment")
 // Commit staged changes
 manager.Commit("Deploy nginx to default namespace")
 ```
+
+## Drift Scanning (Async, Cached, Tool-Based)
+
+Kasa compares every stored manifest against the live cluster to detect configuration drift. Unlike the earlier implementation that blocked startup with a synchronous scan, drift scanning is now:
+
+1. **Async** — Scans run in the background. Startup is instant regardless of manifest count.
+2. **Time-gated** — Scans are cached for 24 hours. If a fresh cache exists at startup, the summary is displayed immediately with no cluster calls.
+3. **Tool-based** — The LLM accesses results via the `show_drift` tool instead of baked-in system prompt context. This decouples scanning from agent creation.
+
+### How It Works
+
+```
+kasa start
+  ├─ Load drift cache from disk (~/.kasa/drift-<context>.json)
+  ├─ If fresh (<24h) → print cached summary, done
+  ├─ If stale/missing → start background scan in REPL Init()
+  └─ When background scan completes → print summary, save to cache
+
+User asks about drift
+  → Agent calls show_drift tool
+  → Returns cached results (with age) or forces refresh=true
+
+User runs /drift
+  → Fresh scan, saves to cache, displays formatted report
+
+Any mutating tool succeeds (apply, delete, import, commit)
+  → countingTool wrapper invalidates cache automatically
+  → Next show_drift call or restart will re-scan
+```
+
+### Key Files
+
+- `tools/drift_cache.go` — `DriftCache` struct: Load/Save/Invalidate/IsFresh, JSON persistence at `~/.kasa/drift-<context>.json`, 24h TTL
+- `tools/show_drift.go` — `ShowDriftTool`: read-only tool returning per-resource diffs; `refresh=true` forces a fresh scan
+- `tools/drift_scan.go` — `RunDriftScan()`, `CompareManifest()`, `FormatDriftSummary()`, `FormatDriftScanResults()`
+- `tools/drift.go` — `DriftScanResults`, `DriftResult`, `DiffEntry` types; `DiffMaps()` recursive comparison
+- `tools/diff_resource.go` — `DiffResourceTool`: on-demand single-resource diff against cluster
+- `tools/counter.go` — `countingTool.Run()` invalidates `DriftCache` after successful mutating operations
+- `repl/model.go` — `Init()` starts background scan if cache stale; `handleDrift()` for `/drift` command; `driftAsync()` saves results to cache
+
+### Cache Invalidation
+
+Invalidation happens in `countingTool.Run()` — after **any** mutating tool call succeeds (no error, no `result["error"]`), `DriftCache.Invalidate()` is called. This covers: `apply_resource`, `apply_manifest`, `import_resource`, `delete_resource`, `delete_manifest`, `commit_manifests`, `delete_namespace`. Context switches create a fresh `DriftCache` for the new context (different cache file).
 
 ## Future: ADK Tool Confirmation
 

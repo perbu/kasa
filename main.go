@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -91,8 +90,17 @@ func main() {
 	// Initialize DirectIO for secret tool side-channel communication
 	directIO := tools.NewDirectIO()
 
+	// Get config directory for drift cache
+	cfgDir, err := configDir()
+	if err != nil {
+		log.Fatalf("Failed to determine config directory: %v", err)
+	}
+
+	// Create drift cache for time-gated background scanning
+	driftCache := tools.NewDriftCache(cfgDir, kubeContext)
+
 	// Initialize tools
-	kubeTools := tools.NewKubeTools(clientset, dynamicClient, manifestMgr, jinaAPIKey, cfg.Agent.ToolWarnThreshold, directIO)
+	kubeTools := tools.NewKubeTools(clientset, dynamicClient, manifestMgr, jinaAPIKey, cfg.Agent.ToolWarnThreshold, directIO, driftCache)
 
 	// Get API key
 	apiKey := cfg.APIKey()
@@ -124,21 +132,12 @@ func main() {
 	toolDocs := kubeTools.GenerateToolDocs()
 	systemPrompt := strings.Replace(cfg.Prompts.System, "{{TOOL_DOCS}}", toolDocs, 1)
 
-	// In interactive mode, run drift scan and inject results into system prompt
+	// Add drift scan hint: the agent gets a show_drift tool instead of
+	// baked-in drift context. Scans run in the background, not blocking startup.
+	systemPrompt += "\n\nA background drift scan compares stored manifests against the live cluster. " +
+		"Call the show_drift tool to get the latest results when the user asks about drift or cluster health."
+
 	isInteractive := *prompt == ""
-	var scanResults *tools.DriftScanResults
-	if isInteractive {
-		progress := func(current, total int, namespace, name, kind string) {
-			fmt.Fprintf(os.Stderr, "\r\033[KDrift scan: checking %s/%s/%s (%d/%d)...", namespace, name, kind, current+1, total)
-		}
-		scanResults, err = tools.RunDriftScan(ctx, dynamicClient, manifestMgr, progress)
-		fmt.Fprintf(os.Stderr, "\r\033[K")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: drift scan failed: %v\n", err)
-		} else if scanResults != nil {
-			systemPrompt += tools.FormatDriftContext(scanResults)
-		}
-	}
 
 	agentConfig := llmagent.Config{
 		Name:        cfg.Agent.Name,
@@ -278,7 +277,8 @@ func main() {
 		// 3. New tools (with fresh DirectIO).
 		newDirectIO := tools.NewDirectIO()
 		newJinaKey := cfg.JinaAPIKey()
-		newKubeTools := tools.NewKubeTools(newClientset, newDynamic, newManifest, newJinaKey, cfg.Agent.ToolWarnThreshold, newDirectIO)
+		newDriftCache := tools.NewDriftCache(cfgDir, resolvedCtx)
+		newKubeTools := tools.NewKubeTools(newClientset, newDynamic, newManifest, newJinaKey, cfg.Agent.ToolWarnThreshold, newDirectIO, newDriftCache)
 		newToolDocs := newKubeTools.GenerateToolDocs()
 		newSysPrompt := strings.Replace(cfg.Prompts.System, "{{TOOL_DOCS}}", newToolDocs, 1)
 
@@ -328,12 +328,13 @@ func main() {
 			ResourceFetcher: makeResourceFetcher(newDynamic),
 			DirectIO:        newDirectIO,
 			DriftScanFunc:   makeDriftScanFn(newDynamic),
+			DriftCache:      newDriftCache,
 			MutationGuard:   newKubeTools.Guard(),
 		}, nil
 	}
 
 	// Create REPL instance
-	replInstance := repl.New(r, sessionService, *debug, manifestMgr, apiKey, cfg.BaseURL(), cfg.Agent.Model, cfg.Agent.MaxToolCalls, kubeTools.Counter(), kubeTools.Guard(), listContextsFn, switchContextFn, makeResourceFetcher(dynamicClient), directIO, kubeContext, makeDriftScanFn(dynamicClient))
+	replInstance := repl.New(r, sessionService, *debug, manifestMgr, apiKey, cfg.BaseURL(), cfg.Agent.Model, cfg.Agent.MaxToolCalls, kubeTools.Counter(), kubeTools.Guard(), listContextsFn, switchContextFn, makeResourceFetcher(dynamicClient), directIO, kubeContext, makeDriftScanFn(dynamicClient), driftCache)
 
 	// Non-interactive mode (no approval workflow - runs directly)
 	if !isInteractive {
@@ -352,9 +353,10 @@ func main() {
 	// Interactive REPL mode - print fancy welcome
 	replInstance.PrintWelcome(strings.TrimSpace(version), cfg.Agent.Model, len(kubeTools.All()), manifestMgr.BaseDir(), cfg.Deployments.Remote)
 
-	// Display drift scan summary (full report available via /drift)
-	if scanResults != nil {
-		if summary := tools.FormatDriftSummary(scanResults); summary != "" {
+	// Display drift scan summary from cache (if fresh).
+	// A stale cache triggers a background scan from the REPL model's Init().
+	if results, _, ok := driftCache.LoadFresh(); ok {
+		if summary := tools.FormatDriftSummary(results); summary != "" {
 			fmt.Println(summary)
 		}
 	}

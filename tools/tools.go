@@ -41,12 +41,15 @@ type KubeTools struct {
 	counter       *ToolCallCounter
 	directIO      *DirectIO
 	guard         *MutationGuard
+	driftCache    *DriftCache
 }
 
 // NewKubeTools creates a new KubeTools instance with the given clientset, dynamic client, manifest manager, and Jina API key.
 // The warnThreshold controls how many calls to the same tool before a warning is
 // injected into the response. Pass 0 to disable per-tool warnings.
-func NewKubeTools(clientset *kubernetes.Clientset, dynamicClient dynamic.Interface, manifest *manifest.Manager, jinaAPIKey string, warnThreshold int, directIO *DirectIO) *KubeTools {
+// The driftCache is optional (nil disables caching); it persists drift scan results
+// across restarts and invalidates after mutating operations.
+func NewKubeTools(clientset *kubernetes.Clientset, dynamicClient dynamic.Interface, manifest *manifest.Manager, jinaAPIKey string, warnThreshold int, directIO *DirectIO, driftCache *DriftCache) *KubeTools {
 	// Install discovery-backed resolver for dynamic CRD resolution.
 	SetResolver(NewResourceResolver(clientset.Discovery()))
 
@@ -58,6 +61,7 @@ func NewKubeTools(clientset *kubernetes.Clientset, dynamicClient dynamic.Interfa
 		counter:       NewToolCallCounter(warnThreshold),
 		directIO:      directIO,
 		guard:         NewMutationGuard(),
+		driftCache:    driftCache,
 	}
 }
 
@@ -75,6 +79,11 @@ func (k *KubeTools) Counter() *ToolCallCounter {
 // the plan/approval workflow.
 func (k *KubeTools) Guard() *MutationGuard {
 	return k.guard
+}
+
+// DriftCache returns the drift cache for background scanning and invalidation.
+func (k *KubeTools) DriftCache() *DriftCache {
+	return k.driftCache
 }
 
 // All returns all available Kubernetes tools implementing tool.Tool interface.
@@ -106,6 +115,8 @@ func (k *KubeTools) All() []tool.Tool {
 		NewApplyResourceTool(k.dynamicClient, k.manifest),
 		NewListResourcesTool(k.dynamicClient),
 		NewDiffResourceTool(k.dynamicClient, k.manifest),
+		// Drift scanning
+		NewShowDriftTool(k.driftCache, k.dynamicClient, k.manifest),
 		// Utility tools
 		NewSleepTool(),
 		NewWaitForConditionTool(k.clientset, k.dynamicClient),
@@ -126,7 +137,7 @@ func (k *KubeTools) All() []tool.Tool {
 	wrapped := make([]tool.Tool, len(raw))
 	for i, t := range raw {
 		if rt, ok := t.(runnableTool); ok {
-			wrapped[i] = &countingTool{inner: rt, counter: k.counter, guard: k.guard}
+			wrapped[i] = &countingTool{inner: rt, counter: k.counter, guard: k.guard, driftCache: k.driftCache}
 		} else {
 			wrapped[i] = t // shouldn't happen, but don't break
 		}

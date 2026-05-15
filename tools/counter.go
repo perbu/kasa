@@ -128,13 +128,15 @@ type runnableTool interface {
 
 // countingTool wraps a runnableTool to track invocations and inject warnings.
 // It also enforces the mutation guard: mutating tools are blocked when the
-// guard says so (i.e. no approved plan).
+// guard says so (i.e. no approved plan). After a successful mutating call,
+// the drift cache (if present) is invalidated so stale results aren't served.
 // It satisfies both the tool.Tool interface and ADK's internal
 // RequestProcessor / FunctionTool interfaces so the runner dispatches it correctly.
 type countingTool struct {
-	inner   runnableTool
-	counter *ToolCallCounter
-	guard   *MutationGuard
+	inner      runnableTool
+	counter    *ToolCallCounter
+	guard      *MutationGuard
+	driftCache *DriftCache
 }
 
 // tool.Tool interface
@@ -177,6 +179,15 @@ func (ct *countingTool) Run(ctx tool.Context, args any) (map[string]any, error) 
 	result, err := ct.inner.Run(ctx, args)
 	if err != nil {
 		return result, err
+	}
+
+	// Invalidate drift cache after successful mutating operations. The early
+	// `if err != nil` return above means err is nil here; only the result-level
+	// error (returned as a map entry, not a Go error) still needs checking.
+	if ct.driftCache != nil && ct.inner.Category() == CategoryMutating {
+		if result == nil || result["error"] == nil {
+			ct.driftCache.Invalidate()
+		}
 	}
 
 	if result != nil && isConnectionError(result) {

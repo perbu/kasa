@@ -55,6 +55,15 @@ type directOutputMsg struct {
 	lines []string
 }
 
+// bgPrintMsg carries unsolicited background output that must NOT touch turn
+// state (agentBusy, focus, etc.). If the REPL is mid-turn — agent running,
+// pending plan, or secret-input modal active — the lines are deferred to
+// m.pendingPrint and flushed at the next idle transition. Use this (not
+// cmdResultMsg) for anything not initiated by the user.
+type bgPrintMsg struct {
+	lines []string
+}
+
 // model is the bubbletea Model for the interactive REPL.
 type model struct {
 	textarea textarea.Model
@@ -119,12 +128,18 @@ type model struct {
 
 	// drift scan callback
 	driftScan DriftScanFunc
+	// drift cache for time-gated background scanning
+	driftCache *tools.DriftCache
 
 	// direct IO for secret tools
 	directIO           *tools.DirectIO
 	secretInputActive  bool
 	secretInput        textinput.Model
 	secretInputRequest *tools.SecretInputRequest
+
+	// pendingPrint holds lines from bgPrintMsg that arrived during a turn;
+	// flushed on the next idle transition by flushPendingPrint().
+	pendingPrint []string
 
 	quitting bool
 }
@@ -144,7 +159,7 @@ var debugStyle = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("8"))
 // toolCallStyle is the dim style for persistent tool call log lines.
 var toolCallStyle = lipgloss.NewStyle().Faint(true)
 
-func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, mutationGuard *tools.MutationGuard, listContexts ContextListFunc, switchContext ContextSwitchFunc, resourceFetcher ResourceFetcher, directIO *tools.DirectIO, contextName string, driftScan DriftScanFunc) model {
+func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, mutationGuard *tools.MutationGuard, listContexts ContextListFunc, switchContext ContextSwitchFunc, resourceFetcher ResourceFetcher, directIO *tools.DirectIO, contextName string, driftScan DriftScanFunc, driftCache *tools.DriftCache) model {
 	ta := textarea.New()
 	ta.Placeholder = "Type a message..."
 	ta.SetPromptFunc(2, func(info textarea.PromptInfo) string {
@@ -214,13 +229,20 @@ func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manife
 		resourceFetcher: resourceFetcher,
 		contextName:     contextName,
 		driftScan:       driftScan,
+		driftCache:      driftCache,
 		directIO:        directIO,
 		secretInput:     si,
 	}
 }
 
 func (m model) Init() tea.Cmd {
-	return m.wave.Tick()
+	// Start background drift scan if cache is stale. Init() asks for a
+	// one-line summary; /drift uses the full report path.
+	cmds := []tea.Cmd{m.wave.Tick()}
+	if m.driftCache != nil && !m.driftCache.IsFresh() {
+		cmds = append(cmds, m.driftAsyncSummary())
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -384,6 +406,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, line := range msg.lines {
 			cmds = append(cmds, tea.Println(line))
 		}
+		if flush := m.flushPendingPrint(); flush != nil {
+			cmds = append(cmds, flush)
+		}
 		return m, tea.Batch(cmds...)
 
 	case planRenderedMsg:
@@ -398,9 +423,55 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, tea.Println(line))
 		}
 		return m, tea.Batch(cmds...)
+
+	case bgPrintMsg:
+		if len(msg.lines) == 0 {
+			return m, nil
+		}
+		// Defer if the REPL is mid-turn so we don't print under a busy
+		// indicator or interrupt a modal. The lines are flushed at the next
+		// idle transition (agent done, cmd result, context switch done).
+		if m.isBusyOrModal() {
+			m.pendingPrint = append(m.pendingPrint, msg.lines...)
+			return m, nil
+		}
+		return m, printLines(msg.lines)
 	}
 
 	return m, nil
+}
+
+// isBusyOrModal reports whether the REPL is in a state where unsolicited
+// background output should be deferred rather than printed immediately.
+func (m model) isBusyOrModal() bool {
+	return m.agentBusy ||
+		m.state.HasPendingPlan() ||
+		m.secretInputActive ||
+		m.showClarification ||
+		m.showContextSelect
+}
+
+// flushPendingPrint returns a Cmd that prints any deferred bgPrintMsg lines
+// and clears the queue. Self-guards on isBusyOrModal: if a plan/modal/etc.
+// is still up after agentBusy clears, the queue is left intact for the next
+// idle transition. The receiver is a pointer because we mutate the slice;
+// Go addresses the value-receiver model's local m for the call.
+func (m *model) flushPendingPrint() tea.Cmd {
+	if len(m.pendingPrint) == 0 || m.isBusyOrModal() {
+		return nil
+	}
+	cmd := printLines(m.pendingPrint)
+	m.pendingPrint = nil
+	return cmd
+}
+
+// printLines returns a Cmd that prints each line via tea.Println.
+func printLines(lines []string) tea.Cmd {
+	cmds := make([]tea.Cmd, 0, len(lines))
+	for _, line := range lines {
+		cmds = append(cmds, tea.Println(line))
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m model) View() tea.View {
@@ -540,6 +611,9 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 			cmds = append(cmds, tea.Println("Plan rejected."))
 				} else {
 			cmds = append(cmds, tea.Println("No pending plan to reject."))
+		}
+		if flush := m.flushPendingPrint(); flush != nil {
+			cmds = append(cmds, flush)
 		}
 		return m, tea.Batch(cmds...)
 
@@ -759,6 +833,9 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 			}
 			cmds = append(cmds, m.textarea.Focus())
 			cmds = append(cmds, tea.Println(fmt.Sprintf("Error: %v", msg.err)))
+			if flush := m.flushPendingPrint(); flush != nil {
+				cmds = append(cmds, flush)
+			}
 			return m, tea.Batch(cmds...)
 		}
 	}
@@ -796,7 +873,10 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-			return m, tea.Batch(cmds...)
+		if flush := m.flushPendingPrint(); flush != nil {
+			cmds = append(cmds, flush)
+		}
+		return m, tea.Batch(cmds...)
 	}
 
 	event := msg.event
@@ -931,6 +1011,9 @@ func (m model) handleClarificationCancel() (tea.Model, tea.Cmd) {
 		m.textarea.Focus(),
 		tea.Println("Clarification cancelled."),
 	}
+	if flush := m.flushPendingPrint(); flush != nil {
+		cmds = append(cmds, flush)
+	}
 	return m, tea.Batch(cmds...)
 }
 
@@ -1032,6 +1115,9 @@ func (m model) handleContextSwitch(msg contextSwitchMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		cmds = append(cmds, m.textarea.Focus())
 		cmds = append(cmds, tea.Println(fmt.Sprintf("Context switch failed: %v", msg.err)))
+		if flush := m.flushPendingPrint(); flush != nil {
+			cmds = append(cmds, flush)
+		}
 		return m, tea.Batch(cmds...)
 	}
 
@@ -1045,6 +1131,9 @@ func (m model) handleContextSwitch(msg contextSwitchMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.result.DriftScanFunc != nil {
 		m.driftScan = msg.result.DriftScanFunc
+	}
+	if msg.result.DriftCache != nil {
+		m.driftCache = msg.result.DriftCache
 	}
 	if msg.result.MutationGuard != nil {
 		m.mutationGuard = msg.result.MutationGuard
@@ -1070,6 +1159,9 @@ func (m model) handleContextSwitch(msg contextSwitchMsg) (tea.Model, tea.Cmd) {
 	cmds = append(cmds, m.textarea.Focus())
 	cmds = append(cmds, tea.Println(fmt.Sprintf("Switched to context: %s", msg.result.ContextName)))
 	cmds = append(cmds, tea.Println("Tip: run /drift to check for manifest drift."))
+	if flush := m.flushPendingPrint(); flush != nil {
+		cmds = append(cmds, flush)
+	}
 	return m, tea.Batch(cmds...)
 }
 
@@ -1262,13 +1354,62 @@ func (m model) handleDrift(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// driftAsync returns a Cmd that runs a drift scan in a goroutine.
+// driftAsync returns a Cmd that runs a drift scan in a goroutine and updates
+// the cache. The full per-resource report is sent back as a cmdResultMsg
+// (used by /drift).
 func (m *model) driftAsync() tea.Cmd {
+	return m.runDriftScan(false)
+}
+
+// driftAsyncSummary runs the same scan but only emits a one-line summary,
+// suitable for the background scan kicked off from Init().
+func (m *model) driftAsyncSummary() tea.Cmd {
+	return m.runDriftScan(true)
+}
+
+func (m *model) runDriftScan(summaryOnly bool) tea.Cmd {
 	return func() tea.Msg {
+		// Don't start a second scan if one is already running (e.g. show_drift
+		// tool with refresh=true raced with the background startup scan).
+		if m.driftCache != nil && !m.driftCache.StartScan() {
+			if summaryOnly {
+				return bgPrintMsg{lines: []string{"Background drift scan skipped (another scan is in progress)."}}
+			}
+			return cmdResultMsg{lines: []string{"Drift scan already in progress."}}
+		}
+		if m.driftCache != nil {
+			defer m.driftCache.EndScan()
+		}
+
+		var gen time.Time
+		if m.driftCache != nil {
+			gen = m.driftCache.Generation()
+		}
+
 		ctx := context.Background()
 		results, err := m.driftScan(ctx, m.manifest)
 		if err != nil {
+			// Init() path: surface failure as a deferrable background line so
+			// it doesn't clobber turn state. /drift: user-initiated, immediate.
+			if summaryOnly {
+				return bgPrintMsg{lines: []string{fmt.Sprintf("Background drift scan failed: %v", err)}}
+			}
 			return cmdResultMsg{lines: []string{fmt.Sprintf("Drift scan failed: %v", err)}}
+		}
+
+		// SaveIfCurrent skips when a mutation invalidated the cache mid-scan,
+		// so this in-flight (now-stale) snapshot doesn't overwrite the
+		// invalidation set by countingTool.
+		if m.driftCache != nil && results != nil {
+			_, _ = m.driftCache.SaveIfCurrent(results, gen)
+		}
+
+		if summaryOnly {
+			summary := tools.FormatDriftSummary(results)
+			if summary == "" {
+				return bgPrintMsg{lines: nil}
+			}
+			return bgPrintMsg{lines: []string{summary}}
 		}
 
 		rendered := tools.FormatDriftScanResults(results, m.width)

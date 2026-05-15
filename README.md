@@ -7,7 +7,11 @@ client-go for Kubernetes interaction.
 
 - Interactive REPL with safe mode, mutating operations require approval.
 - Manifest management with git history tracking
-- Support for core Kubernetes resources and CRDs, Gateway API and others. 
+- Support for core Kubernetes resources and CRDs, Gateway API and others.
+- **Drift detection** — background scanning compares stored manifests
+  against the live cluster. Results are cached for 24 hours and
+  automatically invalidated after any mutating operation. Use `/drift`
+  for a detailed report or ask the agent (it calls the `show_drift` tool). 
 
 ## Build
 

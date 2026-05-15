@@ -154,7 +154,7 @@ func TestGuardNilIsPermissive(t *testing.T) {
 
 func TestGuardBlocksAllMutatingToolsInKubeTools(t *testing.T) {
 	mgr := newTestManifestManager(t)
-	kt := NewKubeTools(clientset, dynamicClient, mgr, "", 3, NewDirectIO())
+	kt := NewKubeTools(clientset, dynamicClient, mgr, "", 3, NewDirectIO(), nil)
 
 	// Guard starts blocked
 	if !kt.Guard().IsBlocked() {
