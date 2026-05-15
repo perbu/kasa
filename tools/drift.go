@@ -224,6 +224,10 @@ func FetchAndCleanLiveResource(ctx context.Context, dynClient dynamic.Interface,
 // only fields present in the stored manifest are checked. Server-added defaults
 // (fields only in live) are ignored.
 func CompareManifest(ctx context.Context, dynClient dynamic.Interface, namespace, name, kind string, storedYAML []byte) DriftResult {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	result := DriftResult{
 		Namespace: namespace,
 		Name:      name,

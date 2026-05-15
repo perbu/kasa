@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -115,7 +114,7 @@ func (t *ListResourcesTool) Run(ctx tool.Context, args any) (map[string]any, err
 	// Check if resource is namespaced
 	namespaced := IsNamespaced(kind)
 
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	timeoutCtx, cancel := withToolTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	listOptions := metav1.ListOptions{}

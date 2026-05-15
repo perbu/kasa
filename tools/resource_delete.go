@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -127,7 +126,7 @@ func (t *DeleteResourceTool) Run(ctx tool.Context, args any) (map[string]any, er
 	}
 
 	// Delete from cluster using dynamic client
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	timeoutCtx, cancel := withToolTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	gvr, found := BuildGVRFromKindAndAPIVersion(normalizedType, apiVersion)

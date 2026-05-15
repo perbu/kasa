@@ -118,7 +118,7 @@ func (t *GetResourceTool) Run(ctx tool.Context, args any) (map[string]any, error
 		apiVersion = av
 	}
 
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	timeoutCtx, cancel := withToolTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	var resource any

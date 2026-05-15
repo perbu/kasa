@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/perbu/kasa/manifest"
 	"google.golang.org/adk/model"
@@ -138,8 +139,9 @@ func (t *DeleteManifestTool) Run(ctx tool.Context, args any) (map[string]any, er
 	// Delete from cluster if requested
 	var clusterDeleteErrors []string
 	if deleteFromCluster && len(manifestsToDelete) > 0 {
+		goCtx := toolCtx(ctx)
 		for _, m := range manifestsToDelete {
-			if err := t.deleteFromCluster(ctx, m.Namespace, app, m.Type); err != nil {
+			if err := t.deleteFromCluster(goCtx, m.Namespace, app, m.Type); err != nil {
 				clusterDeleteErrors = append(clusterDeleteErrors, fmt.Sprintf("%s: %v", m.Type, err))
 			}
 		}
@@ -158,9 +160,12 @@ func (t *DeleteManifestTool) Run(ctx tool.Context, args any) (map[string]any, er
 	return result, nil
 }
 
-// deleteFromCluster deletes a resource from the Kubernetes cluster.
-func (t *DeleteManifestTool) deleteFromCluster(_ tool.Context, namespace, app, resourceType string) error {
-	goCtx := context.Background()
+// deleteFromCluster deletes a resource from the Kubernetes cluster. Each call
+// gets its own 30s timeout so a slow finalizer can't stall the surrounding batch.
+func (t *DeleteManifestTool) deleteFromCluster(ctx context.Context, namespace, app, resourceType string) error {
+	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
 	deletePolicy := metav1.DeletePropagationForeground
 	deleteOptions := metav1.DeleteOptions{
 		PropagationPolicy: &deletePolicy,
@@ -168,15 +173,15 @@ func (t *DeleteManifestTool) deleteFromCluster(_ tool.Context, namespace, app, r
 
 	switch resourceType {
 	case "deployment":
-		return t.clientset.AppsV1().Deployments(namespace).Delete(goCtx, app, deleteOptions)
+		return t.clientset.AppsV1().Deployments(namespace).Delete(timeoutCtx, app, deleteOptions)
 	case "service":
-		return t.clientset.CoreV1().Services(namespace).Delete(goCtx, app, deleteOptions)
+		return t.clientset.CoreV1().Services(namespace).Delete(timeoutCtx, app, deleteOptions)
 	case "configmap":
-		return t.clientset.CoreV1().ConfigMaps(namespace).Delete(goCtx, app, deleteOptions)
+		return t.clientset.CoreV1().ConfigMaps(namespace).Delete(timeoutCtx, app, deleteOptions)
 	case "secret":
-		return t.clientset.CoreV1().Secrets(namespace).Delete(goCtx, app, deleteOptions)
+		return t.clientset.CoreV1().Secrets(namespace).Delete(timeoutCtx, app, deleteOptions)
 	case "ingress":
-		return t.clientset.NetworkingV1().Ingresses(namespace).Delete(goCtx, app, deleteOptions)
+		return t.clientset.NetworkingV1().Ingresses(namespace).Delete(timeoutCtx, app, deleteOptions)
 	default:
 		return fmt.Errorf("unsupported resource type: %s", resourceType)
 	}

@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -60,7 +59,7 @@ func (t *ListHelmReleasesTool) Run(ctx tool.Context, args any) (map[string]any, 
 		namespace = ns
 	}
 
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	timeoutCtx, cancel := withToolTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	secrets, err := t.clientset.CoreV1().Secrets(namespace).List(timeoutCtx, metav1.ListOptions{

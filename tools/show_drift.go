@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -99,7 +98,7 @@ func (t *ShowDriftTool) Run(ctx tool.Context, args any) (map[string]any, error) 
 		if t.cache != nil {
 			gen = t.cache.Generation()
 		}
-		scanCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		scanCtx, cancel := withToolTimeout(ctx, 60*time.Second)
 		defer cancel()
 		results, err := RunDriftScan(scanCtx, t.dynClient, t.manifest, nil)
 		if err != nil {

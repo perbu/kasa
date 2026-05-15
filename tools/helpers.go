@@ -1,8 +1,12 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"time"
+
+	"google.golang.org/adk/tool"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -51,6 +55,21 @@ func errorResult(msg string) (map[string]any, error) {
 // errorResultf returns a formatted tool error response.
 func errorResultf(format string, args ...any) (map[string]any, error) {
 	return map[string]any{"error": fmt.Sprintf(format, args...)}, nil
+}
+
+// toolCtx returns ctx as a context.Context, falling back to context.Background()
+// when ctx is nil. Tests pass nil tool.Context to Run() — production callers do not.
+func toolCtx(ctx tool.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}
+
+// withToolTimeout creates a context with timeout from tool.Context, falling
+// back to context.Background() when ctx is nil (e.g., in tests).
+func withToolTimeout(ctx tool.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(toolCtx(ctx), d)
 }
 
 // namespacedClient returns the appropriate dynamic resource client for a given

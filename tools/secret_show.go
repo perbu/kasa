@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"context"
 	"encoding/base64"
 	"fmt"
 	"sort"
@@ -95,7 +94,7 @@ func (t *ShowSecretTool) Run(ctx tool.Context, args any) (map[string]any, error)
 	}
 
 	// Fetch the secret
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	timeoutCtx, cancel := withToolTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	secret, err := t.clientset.CoreV1().Secrets(namespace).Get(timeoutCtx, name, metav1.GetOptions{})

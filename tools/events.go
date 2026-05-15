@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"context"
 	"sort"
 	"time"
 
@@ -117,7 +116,7 @@ func (t *GetEventsTool) Run(ctx tool.Context, args any) (map[string]any, error) 
 		resourceKind = rk
 	}
 
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	timeoutCtx, cancel := withToolTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	// Build field selector for filtering

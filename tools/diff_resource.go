@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -110,7 +109,7 @@ func (t *DiffResourceTool) Run(ctx tool.Context, args any) (map[string]any, erro
 	}
 
 	// Compare against live cluster
-	result := CompareManifest(context.Background(), t.dynamicClient, namespace, app, resourceType, content)
+	result := CompareManifest(ctx, t.dynamicClient, namespace, app, resourceType, content)
 
 	response := map[string]any{
 		"namespace":  result.Namespace,

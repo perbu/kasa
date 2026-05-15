@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"context"
 	"io"
 	"time"
 
@@ -116,7 +115,7 @@ func (t *GetLogsTool) Run(ctx tool.Context, args any) (map[string]any, error) {
 		tailLines = int64(tl)
 	}
 
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	timeoutCtx, cancel := withToolTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	// Build log options

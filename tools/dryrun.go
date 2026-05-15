@@ -150,15 +150,15 @@ func (t *DryRunApplyTool) Run(ctx tool.Context, args any) (map[string]any, error
 
 	// Check if inline YAML is provided
 	if yamlContent, ok := argsMap["yaml"].(string); ok && yamlContent != "" {
-		return t.dryRunUnstructured([]byte(yamlContent), "", "", "")
+		return t.dryRunUnstructured(ctx, []byte(yamlContent), "", "", "")
 	}
 
 	// Fall back to stored manifest path
-	return t.runStoredManifest(argsMap)
+	return t.runStoredManifest(ctx, argsMap)
 }
 
 // runStoredManifest reads a manifest from storage and validates it via dry-run.
-func (t *DryRunApplyTool) runStoredManifest(argsMap map[string]any) (map[string]any, error) {
+func (t *DryRunApplyTool) runStoredManifest(ctx tool.Context, argsMap map[string]any) (map[string]any, error) {
 	namespace, ok := argsMap["namespace"].(string)
 	if !ok || namespace == "" {
 		return errorResult("namespace is required")
@@ -181,12 +181,12 @@ func (t *DryRunApplyTool) runStoredManifest(argsMap map[string]any) (map[string]
 		return errorResult(err.Error())
 	}
 
-	return t.dryRunUnstructured(content, namespace, app, resourceType)
+	return t.dryRunUnstructured(ctx, content, namespace, app, resourceType)
 }
 
 // dryRunUnstructured validates YAML content using the dynamic client with server-side dry-run.
 // If namespace/app/resourceType are provided (stored manifest path), they are included in the result.
-func (t *DryRunApplyTool) dryRunUnstructured(content []byte, namespace, app, resourceType string) (map[string]any, error) {
+func (t *DryRunApplyTool) dryRunUnstructured(ctx tool.Context, content []byte, namespace, app, resourceType string) (map[string]any, error) {
 	obj, err := ParseYAMLToUnstructured(content)
 	if err != nil {
 		return map[string]any{
@@ -231,7 +231,7 @@ func (t *DryRunApplyTool) dryRunUnstructured(content []byte, namespace, app, res
 		obj.SetNamespace(objNamespace)
 	}
 
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	timeoutCtx, cancel := withToolTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	resourceClient := namespacedClient(t.dynamicClient, gvr, objNamespace, namespaced)

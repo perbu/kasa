@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -106,7 +105,7 @@ func (t *CheckDeploymentHealthTool) Run(ctx tool.Context, args any) (map[string]
 		return errorResult("namespace is required")
 	}
 
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	timeoutCtx, cancel := withToolTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	// Get deployment

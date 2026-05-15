@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -145,7 +144,7 @@ func (t *ApplyManifestTool) Run(ctx tool.Context, args any) (map[string]any, err
 	}
 
 	// Apply to cluster
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	timeoutCtx, cancel := withToolTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	namespaced := IsNamespaced(gvk.Kind)

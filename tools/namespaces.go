@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"context"
 	"time"
 
 	"google.golang.org/adk/model"
@@ -74,7 +73,7 @@ func (t *ListNamespacesTool) Run(ctx tool.Context, args any) (map[string]any, er
 		return errorResult(err.Error())
 	}
 
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	timeoutCtx, cancel := withToolTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	namespaces, err := t.clientset.CoreV1().Namespaces().List(timeoutCtx, metav1.ListOptions{})

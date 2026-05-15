@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -158,7 +157,7 @@ func (t *ApplyResourceTool) Run(ctx tool.Context, args any) (map[string]any, err
 		appName = name
 	}
 
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	timeoutCtx, cancel := withToolTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	// Determine resource type for manifest storage (lowercase kind)

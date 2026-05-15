@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"context"
 	"crypto/rand"
 	"fmt"
 	"math/big"
@@ -183,7 +182,7 @@ func (t *CreateSecretTool) Run(ctx tool.Context, args any) (map[string]any, erro
 		Data: data,
 	}
 
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	timeoutCtx, cancel := withToolTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	// Try create first; on AlreadyExists, merge keys into the existing secret
