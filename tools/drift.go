@@ -33,12 +33,13 @@ type DriftResult struct {
 
 // DriftScanResults holds the aggregate results of scanning all manifests.
 type DriftScanResults struct {
-	Results []DriftResult `json:"results"`
-	Total   int           `json:"total"`
-	InSync  int           `json:"in_sync"`
-	Drifted int           `json:"drifted"`
-	Missing int           `json:"missing"`
-	Errors  int           `json:"errors"`
+	Results        []DriftResult `json:"results"`
+	Total          int           `json:"total"`
+	InSync         int           `json:"in_sync"`
+	Drifted        int           `json:"drifted"`
+	Missing        int           `json:"missing"`
+	Errors         int           `json:"errors"`
+	UntrackedFiles []string      `json:"untracked_files,omitempty"`
 }
 
 // DiffMaps recursively compares two maps and returns field-level differences.

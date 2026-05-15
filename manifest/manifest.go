@@ -368,7 +368,8 @@ func (m *Manager) DeleteManifest(namespace, app, resourceType string) ([]string,
 	return deleted, nil
 }
 
-// stageDeletion stages a file deletion in git.
+// stageDeletion stages a path in git via `git add <relPath>`. Works for
+// additions, modifications, and deletions — git uses the path's current state.
 func (m *Manager) stageDeletion(relPath string) error {
 	cmd := exec.Command("git", "add", relPath)
 	cmd.Dir = m.baseDir
@@ -500,6 +501,36 @@ func (m *Manager) StagedDiff() (string, error) {
 		return "", fmt.Errorf("git diff --cached failed: %w\nOutput: %s", err, string(output))
 	}
 	return string(output), nil
+}
+
+// StageFile stages a single file for commit using git add.
+// relPath is relative to baseDir and must live under the current context
+// (e.g., "my-context/default/nginx/deployment.yaml").
+func (m *Manager) StageFile(relPath string) error {
+	if !strings.HasPrefix(relPath, m.context+"/") {
+		return fmt.Errorf("path must be within current context (%s/...), got: %s", m.context, relPath)
+	}
+	if err := m.stageDeletion(relPath); err != nil {
+		return err
+	}
+	m.RecordChange(fmt.Sprintf("Staged %s", relPath))
+	return nil
+}
+
+// ListUntracked returns files under the context subdirectory that are not
+// tracked by git (new files that have never been staged or committed).
+func (m *Manager) ListUntracked() ([]string, error) {
+	cmd := exec.Command("git", "ls-files", "--others", "--exclude-standard", "--", m.context+"/")
+	cmd.Dir = m.baseDir
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("listing untracked files: %w", err)
+	}
+	text := strings.TrimSpace(string(output))
+	if text == "" {
+		return nil, nil
+	}
+	return strings.Split(text, "\n"), nil
 }
 
 // ManifestExists checks if a manifest file already exists.

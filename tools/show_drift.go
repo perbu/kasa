@@ -147,6 +147,10 @@ func formatDriftToolResponse(results *DriftScanResults, scannedAt time.Time) map
 		"scanned_at": scannedAt.Format(time.RFC3339),
 	}
 
+	if len(results.UntrackedFiles) > 0 {
+		response["untracked_files"] = results.UntrackedFiles
+	}
+
 	// Build per-resource results
 	resourceResults := make([]map[string]any, len(results.Results))
 	for i, r := range results.Results {

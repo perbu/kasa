@@ -46,6 +46,11 @@ func RunDriftScan(ctx context.Context, dynClient dynamic.Interface, mgr *manifes
 		Total: len(manifests),
 	}
 
+	// Check for untracked files in the manifest repo
+	if untracked, err := mgr.ListUntracked(); err == nil {
+		results.UntrackedFiles = untracked
+	}
+
 	for i, m := range manifests {
 		if progress != nil {
 			progress(i, len(manifests), m.Namespace, m.App, m.Type)
@@ -89,31 +94,39 @@ func FormatDriftSummary(results *DriftScanResults) string {
 		return ""
 	}
 
+	var sb strings.Builder
+
 	if results.InSync == results.Total {
-		check := driftOKStyle.Render("✓")
-		return fmt.Sprintf("%s %s",
+		fmt.Fprintf(&sb, "%s %s",
 			driftHeaderStyle.Render(fmt.Sprintf("Drift scan: %d manifests, all in sync", results.Total)),
-			check)
+			driftOKStyle.Render("✓"))
+	} else {
+		parts := []string{}
+		if results.InSync > 0 {
+			parts = append(parts, driftOKStyle.Render(fmt.Sprintf("%d ok", results.InSync)))
+		}
+		if results.Drifted > 0 {
+			parts = append(parts, driftDriftedStyle.Render(fmt.Sprintf("%d drifted", results.Drifted)))
+		}
+		if results.Missing > 0 {
+			parts = append(parts, driftMissingStyle.Render(fmt.Sprintf("%d missing", results.Missing)))
+		}
+		if results.Errors > 0 {
+			parts = append(parts, driftErrorStyle.Render(fmt.Sprintf("%d errors", results.Errors)))
+		}
+		fmt.Fprintf(&sb, "%s %s — use %s for details",
+			driftHeaderStyle.Render(fmt.Sprintf("Drift scan: %d manifests:", results.Total)),
+			strings.Join(parts, ", "),
+			driftHeaderStyle.Render("/drift"))
 	}
 
-	parts := []string{}
-	if results.InSync > 0 {
-		parts = append(parts, driftOKStyle.Render(fmt.Sprintf("%d ok", results.InSync)))
-	}
-	if results.Drifted > 0 {
-		parts = append(parts, driftDriftedStyle.Render(fmt.Sprintf("%d drifted", results.Drifted)))
-	}
-	if results.Missing > 0 {
-		parts = append(parts, driftMissingStyle.Render(fmt.Sprintf("%d missing", results.Missing)))
-	}
-	if results.Errors > 0 {
-		parts = append(parts, driftErrorStyle.Render(fmt.Sprintf("%d errors", results.Errors)))
+	if n := len(results.UntrackedFiles); n > 0 {
+		sb.WriteString("\n")
+		sb.WriteString(driftMissingStyle.Render(fmt.Sprintf(
+			"⚠ %d untracked file(s) in manifest repo — use stage_file to add them before committing", n)))
 	}
 
-	return fmt.Sprintf("%s %s — use %s for details",
-		driftHeaderStyle.Render(fmt.Sprintf("Drift scan: %d manifests:", results.Total)),
-		strings.Join(parts, ", "),
-		driftHeaderStyle.Render("/drift"))
+	return sb.String()
 }
 
 // Styles for drift scan output.
@@ -203,6 +216,14 @@ func FormatDriftScanResults(results *DriftScanResults, width int) string {
 		}
 
 		sb.WriteString(fmt.Sprintf("  %s  %s\n", driftResourceDim.Render(padded), status))
+	}
+
+	if n := len(results.UntrackedFiles); n > 0 {
+		sb.WriteString("\n")
+		sb.WriteString(driftMissingStyle.Render(fmt.Sprintf("⚠ %d untracked file(s) in manifest repo:\n", n)))
+		for _, f := range results.UntrackedFiles {
+			fmt.Fprintf(&sb, "    %s\n", driftResourceDim.Render(f))
+		}
 	}
 
 	return sb.String()

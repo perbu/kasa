@@ -115,6 +115,8 @@ func (k *KubeTools) All() []tool.Tool {
 		NewApplyResourceTool(k.dynamicClient, k.manifest),
 		NewListResourcesTool(k.dynamicClient),
 		NewDiffResourceTool(k.dynamicClient, k.manifest),
+		// Git staging
+		NewStageFileTool(k.manifest),
 		// Drift scanning
 		NewShowDriftTool(k.driftCache, k.dynamicClient, k.manifest),
 		// Utility tools
