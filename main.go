@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/perbu/kasa/openaimodel"
 	"github.com/perbu/kasa/repl"
 	"github.com/perbu/kasa/tools"
+	"github.com/perbu/kasa/workspace"
 	"google.golang.org/adk/agent/llmagent"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
@@ -33,6 +35,8 @@ func main() {
 	prompt := flag.String("prompt", "", "Run a single prompt and exit (non-interactive mode)")
 	debug := flag.Bool("debug", false, "Enable debug output")
 	noTools := flag.Bool("no-tools", false, "Run without tools (for testing)")
+	workspaceDir := flag.String("workspace", "", "Local directory exposed to the agent for context (defaults to current working directory)")
+	noWorkspace := flag.Bool("no-workspace", false, "Disable the workspace tools entirely")
 	flag.Parse()
 
 	// Handle "init" subcommand
@@ -90,6 +94,22 @@ func main() {
 	// Initialize DirectIO for secret tool side-channel communication
 	directIO := tools.NewDirectIO()
 
+	var ws *workspace.Workspace
+	if !*noWorkspace {
+		root := *workspaceDir
+		if root == "" {
+			cwd, err := os.Getwd()
+			if err != nil {
+				log.Fatalf("Failed to determine working directory: %v", err)
+			}
+			root = cwd
+		}
+		ws, err = workspace.New(root)
+		if err != nil {
+			log.Fatalf("Failed to initialize workspace: %v", err)
+		}
+	}
+
 	// Get config directory for drift cache
 	cfgDir, err := configDir()
 	if err != nil {
@@ -100,7 +120,7 @@ func main() {
 	driftCache := tools.NewDriftCache(cfgDir, kubeContext)
 
 	// Initialize tools
-	kubeTools := tools.NewKubeTools(clientset, dynamicClient, manifestMgr, jinaAPIKey, cfg.Agent.ToolWarnThreshold, directIO, driftCache)
+	kubeTools := tools.NewKubeTools(clientset, dynamicClient, manifestMgr, ws, jinaAPIKey, cfg.Agent.ToolWarnThreshold, directIO, driftCache)
 
 	// Get API key
 	apiKey := cfg.APIKey()
@@ -136,6 +156,14 @@ func main() {
 	// baked-in drift context. Scans run in the background, not blocking startup.
 	systemPrompt += "\n\nA background drift scan compares stored manifests against the live cluster. " +
 		"Call the show_drift tool to get the latest results when the user asks about drift or cluster health."
+
+	// Workspace hint: tell the agent the local workspace exists so it consults
+	// docs/notes the user has dropped in the launch directory.
+	if ws != nil {
+		systemPrompt += fmt.Sprintf("\n\nA local workspace is mounted at %s. "+
+			"When the user references \"the doc\", \"the plan\", \"my notes\", or any task documentation, "+
+			"use list_workspace and read_workspace_file to consult it before asking for clarification.", ws.Root())
+	}
 
 	isInteractive := *prompt == ""
 
@@ -278,7 +306,7 @@ func main() {
 		newDirectIO := tools.NewDirectIO()
 		newJinaKey := cfg.JinaAPIKey()
 		newDriftCache := tools.NewDriftCache(cfgDir, resolvedCtx)
-		newKubeTools := tools.NewKubeTools(newClientset, newDynamic, newManifest, newJinaKey, cfg.Agent.ToolWarnThreshold, newDirectIO, newDriftCache)
+		newKubeTools := tools.NewKubeTools(newClientset, newDynamic, newManifest, ws, newJinaKey, cfg.Agent.ToolWarnThreshold, newDirectIO, newDriftCache)
 		newToolDocs := newKubeTools.GenerateToolDocs()
 		newSysPrompt := strings.Replace(cfg.Prompts.System, "{{TOOL_DOCS}}", newToolDocs, 1)
 
@@ -352,6 +380,11 @@ func main() {
 
 	// Interactive REPL mode - print fancy welcome
 	replInstance.PrintWelcome(strings.TrimSpace(version), cfg.Agent.Model, len(kubeTools.All()), manifestMgr.BaseDir(), cfg.Deployments.Remote)
+
+	// One-line discoverability for the workspace.
+	if ws != nil {
+		fmt.Printf("Workspace: %s\n", ws.Root())
+	}
 
 	// Display drift scan summary from cache (if fresh).
 	// A stale cache triggers a background scan from the REPL model's Init().

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/perbu/kasa/manifest"
+	"github.com/perbu/kasa/workspace"
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/tool"
 	"google.golang.org/genai"
@@ -37,6 +38,7 @@ type KubeTools struct {
 	clientset     *kubernetes.Clientset
 	dynamicClient dynamic.Interface
 	manifest      *manifest.Manager
+	workspace     *workspace.Workspace
 	jinaAPIKey    string
 	counter       *ToolCallCounter
 	directIO      *DirectIO
@@ -49,7 +51,7 @@ type KubeTools struct {
 // injected into the response. Pass 0 to disable per-tool warnings.
 // The driftCache is optional (nil disables caching); it persists drift scan results
 // across restarts and invalidates after mutating operations.
-func NewKubeTools(clientset *kubernetes.Clientset, dynamicClient dynamic.Interface, manifest *manifest.Manager, jinaAPIKey string, warnThreshold int, directIO *DirectIO, driftCache *DriftCache) *KubeTools {
+func NewKubeTools(clientset *kubernetes.Clientset, dynamicClient dynamic.Interface, manifest *manifest.Manager, ws *workspace.Workspace, jinaAPIKey string, warnThreshold int, directIO *DirectIO, driftCache *DriftCache) *KubeTools {
 	// Install discovery-backed resolver for dynamic CRD resolution.
 	SetResolver(NewResourceResolver(clientset.Discovery()))
 
@@ -57,6 +59,7 @@ func NewKubeTools(clientset *kubernetes.Clientset, dynamicClient dynamic.Interfa
 		clientset:     clientset,
 		dynamicClient: dynamicClient,
 		manifest:      manifest,
+		workspace:     ws,
 		jinaAPIKey:    jinaAPIKey,
 		counter:       NewToolCallCounter(warnThreshold),
 		directIO:      directIO,
@@ -134,6 +137,14 @@ func (k *KubeTools) All() []tool.Tool {
 		// Secret tools (side-channel: values bypass the LLM)
 		NewCreateSecretTool(k.clientset, k.directIO),
 		NewShowSecretTool(k.clientset, k.directIO),
+	}
+
+	// Local workspace tools — only registered when a workspace root is configured.
+	if k.workspace != nil {
+		raw = append(raw,
+			NewListWorkspaceTool(k.workspace),
+			NewReadWorkspaceFileTool(k.workspace),
+		)
 	}
 
 	wrapped := make([]tool.Tool, len(raw))
