@@ -114,10 +114,12 @@ func FormatDriftSummary(results *DriftScanResults) string {
 		if results.Errors > 0 {
 			parts = append(parts, driftErrorStyle.Render(fmt.Sprintf("%d errors", results.Errors)))
 		}
-		fmt.Fprintf(&sb, "%s %s — use %s for details",
+		fmt.Fprintf(&sb, "%s %s — ask about drift for details",
 			driftHeaderStyle.Render(fmt.Sprintf("Drift scan: %d manifests:", results.Total)),
-			strings.Join(parts, ", "),
-			driftHeaderStyle.Render("/drift"))
+			strings.Join(parts, ", "))
+		sb.WriteString("\n")
+		sb.WriteString(driftResourceDim.Render(
+			"If you share this manifest repo with teammates, pull the latest revision before investigating."))
 	}
 
 	if n := len(results.UntrackedFiles); n > 0 {
