@@ -25,6 +25,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
+	metricsclient "k8s.io/metrics/pkg/client/clientset/versioned"
 	sigsyaml "sigs.k8s.io/yaml"
 )
 
@@ -65,7 +66,7 @@ func main() {
 	}
 
 	// Initialize Kubernetes client
-	clientset, dynamicClient, kubeContext, err := initKubeClient(cfg.Kubernetes.Kubeconfig, cfg.Kubernetes.Context)
+	clientset, dynamicClient, metricsCli, kubeContext, err := initKubeClient(cfg.Kubernetes.Kubeconfig, cfg.Kubernetes.Context)
 	if err != nil {
 		log.Fatalf("Failed to initialize Kubernetes client: %v", err)
 	}
@@ -120,7 +121,7 @@ func main() {
 	driftCache := tools.NewDriftCache(cfgDir, kubeContext)
 
 	// Initialize tools
-	kubeTools := tools.NewKubeTools(clientset, dynamicClient, manifestMgr, ws, jinaAPIKey, cfg.Agent.ToolWarnThreshold, directIO, driftCache)
+	kubeTools := tools.NewKubeTools(clientset, dynamicClient, metricsCli, manifestMgr, ws, jinaAPIKey, cfg.Agent.ToolWarnThreshold, directIO, driftCache)
 
 	// Get API key
 	apiKey := cfg.APIKey()
@@ -283,7 +284,7 @@ func main() {
 
 	switchContextFn := func(contextName string) (*repl.ContextSwitchResult, error) {
 		// 1. Build new Kubernetes clients.
-		newClientset, newDynamic, resolvedCtx, err := initKubeClient(kubeconfigPath, contextName)
+		newClientset, newDynamic, newMetrics, resolvedCtx, err := initKubeClient(kubeconfigPath, contextName)
 		if err != nil {
 			return nil, fmt.Errorf("initializing kube client: %w", err)
 		}
@@ -306,7 +307,7 @@ func main() {
 		newDirectIO := tools.NewDirectIO()
 		newJinaKey := cfg.JinaAPIKey()
 		newDriftCache := tools.NewDriftCache(cfgDir, resolvedCtx)
-		newKubeTools := tools.NewKubeTools(newClientset, newDynamic, newManifest, ws, newJinaKey, cfg.Agent.ToolWarnThreshold, newDirectIO, newDriftCache)
+		newKubeTools := tools.NewKubeTools(newClientset, newDynamic, newMetrics, newManifest, ws, newJinaKey, cfg.Agent.ToolWarnThreshold, newDirectIO, newDriftCache)
 		newToolDocs := newKubeTools.GenerateToolDocs()
 		newSysPrompt := strings.Replace(cfg.Prompts.System, "{{TOOL_DOCS}}", newToolDocs, 1)
 
@@ -400,9 +401,10 @@ func main() {
 	}
 }
 
-// initKubeClient initializes a Kubernetes clientset, dynamic client, and resolves
+// initKubeClient initializes a Kubernetes clientset, dynamic client, metrics
+// clientset (best-effort: nil if metrics-server is unreachable), and resolves
 // the active context name.
-func initKubeClient(kubeconfig, kubecontext string) (*kubernetes.Clientset, dynamic.Interface, string, error) {
+func initKubeClient(kubeconfig, kubecontext string) (*kubernetes.Clientset, dynamic.Interface, metricsclient.Interface, string, error) {
 	// Use default kubeconfig path if not specified
 	if kubeconfig == "" {
 		if home := homedir.HomeDir(); home != "" {
@@ -422,13 +424,13 @@ func initKubeClient(kubeconfig, kubecontext string) (*kubernetes.Clientset, dyna
 
 	config, err := clientConfig.ClientConfig()
 	if err != nil {
-		return nil, nil, "", fmt.Errorf("building kubeconfig: %w", err)
+		return nil, nil, nil, "", fmt.Errorf("building kubeconfig: %w", err)
 	}
 
 	// Resolve the active context name
 	rawConfig, err := clientConfig.RawConfig()
 	if err != nil {
-		return nil, nil, "", fmt.Errorf("reading raw kubeconfig: %w", err)
+		return nil, nil, nil, "", fmt.Errorf("reading raw kubeconfig: %w", err)
 	}
 	resolvedContext := rawConfig.CurrentContext
 	if kubecontext != "" {
@@ -437,15 +439,22 @@ func initKubeClient(kubeconfig, kubecontext string) (*kubernetes.Clientset, dyna
 
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		return nil, nil, "", fmt.Errorf("creating kubernetes client: %w", err)
+		return nil, nil, nil, "", fmt.Errorf("creating kubernetes client: %w", err)
 	}
 
 	dynamicClient, err := dynamic.NewForConfig(config)
 	if err != nil {
-		return nil, nil, "", fmt.Errorf("creating dynamic client: %w", err)
+		return nil, nil, nil, "", fmt.Errorf("creating dynamic client: %w", err)
 	}
 
-	return clientset, dynamicClient, resolvedContext, nil
+	// Metrics client is best-effort — if construction fails the top_* tools
+	// will return a helpful error at call time rather than blocking startup.
+	metricsCli, err := metricsclient.NewForConfig(config)
+	if err != nil {
+		metricsCli = nil
+	}
+
+	return clientset, dynamicClient, metricsCli, resolvedContext, nil
 }
 
 // listKubeContexts reads a kubeconfig file and returns all contexts with their

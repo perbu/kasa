@@ -11,6 +11,7 @@ import (
 	"google.golang.org/genai"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	metricsclient "k8s.io/metrics/pkg/client/clientset/versioned"
 )
 
 // ToolCategory classifies tools by their side effects.
@@ -37,6 +38,7 @@ func IsMutating(t tool.Tool) bool {
 type KubeTools struct {
 	clientset     *kubernetes.Clientset
 	dynamicClient dynamic.Interface
+	metricsClient metricsclient.Interface
 	manifest      *manifest.Manager
 	workspace     *workspace.Workspace
 	jinaAPIKey    string
@@ -51,13 +53,14 @@ type KubeTools struct {
 // injected into the response. Pass 0 to disable per-tool warnings.
 // The driftCache is optional (nil disables caching); it persists drift scan results
 // across restarts and invalidates after mutating operations.
-func NewKubeTools(clientset *kubernetes.Clientset, dynamicClient dynamic.Interface, manifest *manifest.Manager, ws *workspace.Workspace, jinaAPIKey string, warnThreshold int, directIO *DirectIO, driftCache *DriftCache) *KubeTools {
+func NewKubeTools(clientset *kubernetes.Clientset, dynamicClient dynamic.Interface, metricsClient metricsclient.Interface, manifest *manifest.Manager, ws *workspace.Workspace, jinaAPIKey string, warnThreshold int, directIO *DirectIO, driftCache *DriftCache) *KubeTools {
 	// Install discovery-backed resolver for dynamic CRD resolution.
 	SetResolver(NewResourceResolver(clientset.Discovery()))
 
 	return &KubeTools{
 		clientset:     clientset,
 		dynamicClient: dynamicClient,
+		metricsClient: metricsClient,
 		manifest:      manifest,
 		workspace:     ws,
 		jinaAPIKey:    jinaAPIKey,
@@ -97,6 +100,8 @@ func (k *KubeTools) All() []tool.Tool {
 		NewListNamespacesTool(k.clientset),
 		NewDeleteNamespaceTool(k.clientset, k.manifest),
 		NewListPodsTool(k.clientset),
+		NewTopNodesTool(k.clientset, k.metricsClient),
+		NewTopPodsTool(k.metricsClient),
 		NewGetLogsTool(k.clientset),
 		NewGetEventsTool(k.clientset),
 		NewGetResourceTool(k.clientset, k.dynamicClient),
