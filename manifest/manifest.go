@@ -431,21 +431,21 @@ func (m *Manager) HasRemote() bool {
 	return cmd.Run() == nil
 }
 
-// Pull fetches and fast-forward merges from the remote.
+// Pull fetches from the remote and rebases local commits on top.
 // If no remote is configured, this is a no-op.
 // Returns git's combined stdout/stderr alongside any error.
-// Returns an error if fast-forward is not possible (diverged history).
+// Returns an error if the rebase hits conflicts that need manual resolution.
 func (m *Manager) Pull() (string, error) {
 	if !m.HasRemote() {
 		return "", nil
 	}
 
-	cmd := exec.Command("git", "pull", "--ff-only", "origin", "HEAD")
+	cmd := exec.Command("git", "pull", "--rebase", "origin", "HEAD")
 	cmd.Dir = m.baseDir
 	output, err := cmd.CombinedOutput()
 	out := strings.TrimSpace(string(output))
 	if err != nil {
-		return out, fmt.Errorf("remote has diverged from local — resolve manually in %s", m.baseDir)
+		return out, fmt.Errorf("rebase failed — resolve manually in %s", m.baseDir)
 	}
 	return out, nil
 }
