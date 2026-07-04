@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/glamour"
+	"charm.land/glamour/v2"
 	"golang.org/x/term"
 	"github.com/perbu/kasa/manifest"
 	"github.com/perbu/kasa/tools"

@@ -57,6 +57,14 @@ func formatGetLogs(response map[string]any) (string, string, bool) {
 		return "", "", false
 	}
 
+	// Sanitize control characters: bubbletea's renderer measures printed lines
+	// with ansi.StringWidth, which doesn't model tab stops or carriage returns.
+	// Raw tabs/CRs (common in pod logs, e.g. Go stack traces) make the physical
+	// row count diverge from the computed one and garble the screen.
+	logs = strings.ReplaceAll(logs, "\t", "    ")
+	logs = strings.ReplaceAll(logs, "\r\n", "\n")
+	logs = strings.ReplaceAll(logs, "\r", "\n")
+
 	ns, _ := response["namespace"].(string)
 	pod, _ := response["pod"].(string)
 	container, _ := response["container"].(string)

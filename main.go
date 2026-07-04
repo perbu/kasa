@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -25,6 +26,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
+	"k8s.io/klog/v2"
 	metricsclient "k8s.io/metrics/pkg/client/clientset/versioned"
 	sigsyaml "sigs.k8s.io/yaml"
 )
@@ -65,8 +67,24 @@ func main() {
 		}
 	}
 
+	// Get config directory (drift cache, klog redirect)
+	cfgDir, err := configDir()
+	if err != nil {
+		log.Fatalf("Failed to determine config directory: %v", err)
+	}
+
+	// Redirect klog (used by client-go for API deprecation warnings, throttling
+	// notices, etc.) away from stderr. Raw stderr writes corrupt the
+	// bubbletea-managed screen in interactive mode; output goes to
+	// ~/.kasa/klog.log instead.
+	redirectKlog(cfgDir)
+
+	// Relay API warning headers (deprecations, webhook warnings) to the REPL
+	// for display instead of letting client-go log them to stderr.
+	warningRelay := tools.NewWarningRelay()
+
 	// Initialize Kubernetes client
-	clientset, dynamicClient, metricsCli, kubeContext, err := initKubeClient(cfg.Kubernetes.Kubeconfig, cfg.Kubernetes.Context)
+	clientset, dynamicClient, metricsCli, kubeContext, err := initKubeClient(cfg.Kubernetes.Kubeconfig, cfg.Kubernetes.Context, warningRelay)
 	if err != nil {
 		log.Fatalf("Failed to initialize Kubernetes client: %v", err)
 	}
@@ -109,12 +127,6 @@ func main() {
 		if err != nil {
 			log.Fatalf("Failed to initialize workspace: %v", err)
 		}
-	}
-
-	// Get config directory for drift cache
-	cfgDir, err := configDir()
-	if err != nil {
-		log.Fatalf("Failed to determine config directory: %v", err)
 	}
 
 	// Create drift cache for time-gated background scanning
@@ -399,6 +411,21 @@ func main() {
 	if err := replInstance.Run(ctx); err != nil {
 		log.Fatalf("REPL error: %v", err)
 	}
+}
+
+// redirectKlog sends klog output to <cfgDir>/klog.log instead of stderr.
+// client-go logs through klog: API server deprecation warnings (via the
+// default rest.WarningHandler), client-side throttling notices, transport
+// errors. Written raw to stderr, these land in the middle of the
+// bubbletea-managed screen and desync its renderer, garbling the display.
+func redirectKlog(cfgDir string) {
+	klog.LogToStderr(false)
+	f, err := os.OpenFile(filepath.Join(cfgDir, "klog.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		klog.SetOutput(io.Discard)
+		return
+	}
+	klog.SetOutput(f)
 }
 
 // initKubeClient initializes a Kubernetes clientset, dynamic client, metrics

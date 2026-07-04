@@ -1,12 +1,12 @@
 package tools
 
 import (
-	"log"
 	"strings"
 	"sync"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
+	"k8s.io/klog/v2"
 )
 
 // discoveredResource holds the resolved GVR and scope for a discovered API resource.
@@ -126,10 +126,10 @@ func (r *ResourceResolver) loadCache() {
 	if err != nil {
 		// Partial results are still usable.
 		if lists == nil {
-			log.Printf("discovery: failed to fetch API resources: %v", err)
+			klog.Warningf("discovery: failed to fetch API resources: %v", err)
 			return // don't set loaded — allow retry
 		}
-		log.Printf("discovery: partial error fetching API resources (using partial results): %v", err)
+		klog.Warningf("discovery: partial error fetching API resources (using partial results): %v", err)
 	}
 
 	for _, list := range lists {
