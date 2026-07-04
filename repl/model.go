@@ -64,6 +64,12 @@ type bgPrintMsg struct {
 	lines []string
 }
 
+// apiWarningMsg carries a Kubernetes API warning header captured by the
+// WarningRelay (deprecation notices, admission webhook warnings).
+type apiWarningMsg struct {
+	text string
+}
+
 // model is the bubbletea Model for the interactive REPL.
 type model struct {
 	textarea textarea.Model
@@ -131,6 +137,9 @@ type model struct {
 	// drift cache for time-gated background scanning
 	driftCache *tools.DriftCache
 
+	// warnings relays Kubernetes API warning headers for display
+	warnings *tools.WarningRelay
+
 	// direct IO for secret tools
 	directIO           *tools.DirectIO
 	secretInputActive  bool
@@ -153,13 +162,17 @@ var separatorStyle = lipgloss.NewStyle().Faint(true)
 // uncommittedStyle is the style for the uncommitted changes indicator.
 var uncommittedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Faint(true)
 
+// apiWarningStyle is the style for Kubernetes API warnings (deprecations,
+// admission webhook warnings) relayed from client-go.
+var apiWarningStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+
 // debugStyle is the dim gray style for debug output lines.
 var debugStyle = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("8"))
 
 // toolCallStyle is the dim style for persistent tool call log lines.
 var toolCallStyle = lipgloss.NewStyle().Faint(true)
 
-func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, mutationGuard *tools.MutationGuard, listContexts ContextListFunc, switchContext ContextSwitchFunc, resourceFetcher ResourceFetcher, directIO *tools.DirectIO, contextName string, driftScan DriftScanFunc, driftCache *tools.DriftCache) model {
+func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, mutationGuard *tools.MutationGuard, listContexts ContextListFunc, switchContext ContextSwitchFunc, resourceFetcher ResourceFetcher, directIO *tools.DirectIO, contextName string, driftScan DriftScanFunc, driftCache *tools.DriftCache, warnings *tools.WarningRelay) model {
 	ta := textarea.New()
 	ta.Placeholder = "Type a message..."
 	ta.SetPromptFunc(2, func(info textarea.PromptInfo) string {
@@ -230,6 +243,7 @@ func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manife
 		contextName:     contextName,
 		driftScan:       driftScan,
 		driftCache:      driftCache,
+		warnings:        warnings,
 		directIO:        directIO,
 		secretInput:     si,
 	}
@@ -242,7 +256,17 @@ func (m model) Init() tea.Cmd {
 	if m.driftCache != nil && !m.driftCache.IsFresh() {
 		cmds = append(cmds, m.driftAsyncSummary())
 	}
+	if m.warnings != nil {
+		cmds = append(cmds, waitForWarning(m.warnings.Ch()))
+	}
 	return tea.Batch(cmds...)
+}
+
+// waitForWarning returns a Cmd that reads one API warning from the relay.
+func waitForWarning(ch <-chan string) tea.Cmd {
+	return func() tea.Msg {
+		return apiWarningMsg{text: <-ch}
+	}
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -436,6 +460,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, printLines(msg.lines)
+
+	case apiWarningMsg:
+		// Re-arm the listener, then display (or defer) like bgPrintMsg.
+		cmds = append(cmds, waitForWarning(m.warnings.Ch()))
+		text := "⚠ " + msg.text
+		if m.width > 0 {
+			text = ansi.Wordwrap(text, m.width-1, "")
+		}
+		line := apiWarningStyle.Render(text)
+		if m.isBusyOrModal() {
+			m.pendingPrint = append(m.pendingPrint, line)
+			return m, tea.Batch(cmds...)
+		}
+		cmds = append(cmds, tea.Println(line))
+		return m, tea.Batch(cmds...)
 	}
 
 	return m, nil

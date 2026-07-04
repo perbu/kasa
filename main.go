@@ -24,6 +24,7 @@ import (
 	"google.golang.org/adk/tool"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
 	"k8s.io/klog/v2"
@@ -295,8 +296,9 @@ func main() {
 	}
 
 	switchContextFn := func(contextName string) (*repl.ContextSwitchResult, error) {
-		// 1. Build new Kubernetes clients.
-		newClientset, newDynamic, newMetrics, resolvedCtx, err := initKubeClient(kubeconfigPath, contextName)
+		// 1. Build new Kubernetes clients (same warning relay: the REPL keeps
+		// listening on the original channel across context switches).
+		newClientset, newDynamic, newMetrics, resolvedCtx, err := initKubeClient(kubeconfigPath, contextName, warningRelay)
 		if err != nil {
 			return nil, fmt.Errorf("initializing kube client: %w", err)
 		}
@@ -375,7 +377,7 @@ func main() {
 	}
 
 	// Create REPL instance
-	replInstance := repl.New(r, sessionService, *debug, manifestMgr, apiKey, cfg.BaseURL(), cfg.Agent.Model, cfg.Agent.MaxToolCalls, kubeTools.Counter(), kubeTools.Guard(), listContextsFn, switchContextFn, makeResourceFetcher(dynamicClient), directIO, kubeContext, makeDriftScanFn(dynamicClient), driftCache)
+	replInstance := repl.New(r, sessionService, *debug, manifestMgr, apiKey, cfg.BaseURL(), cfg.Agent.Model, cfg.Agent.MaxToolCalls, kubeTools.Counter(), kubeTools.Guard(), listContextsFn, switchContextFn, makeResourceFetcher(dynamicClient), directIO, kubeContext, makeDriftScanFn(dynamicClient), driftCache, warningRelay)
 
 	// Non-interactive mode (no approval workflow - runs directly)
 	if !isInteractive {
@@ -430,8 +432,9 @@ func redirectKlog(cfgDir string) {
 
 // initKubeClient initializes a Kubernetes clientset, dynamic client, metrics
 // clientset (best-effort: nil if metrics-server is unreachable), and resolves
-// the active context name.
-func initKubeClient(kubeconfig, kubecontext string) (*kubernetes.Clientset, dynamic.Interface, metricsclient.Interface, string, error) {
+// the active context name. If warningHandler is non-nil it replaces client-go's
+// default handler (which logs API warning headers via klog).
+func initKubeClient(kubeconfig, kubecontext string, warningHandler rest.WarningHandler) (*kubernetes.Clientset, dynamic.Interface, metricsclient.Interface, string, error) {
 	// Use default kubeconfig path if not specified
 	if kubeconfig == "" {
 		if home := homedir.HomeDir(); home != "" {
@@ -452,6 +455,9 @@ func initKubeClient(kubeconfig, kubecontext string) (*kubernetes.Clientset, dyna
 	config, err := clientConfig.ClientConfig()
 	if err != nil {
 		return nil, nil, nil, "", fmt.Errorf("building kubeconfig: %w", err)
+	}
+	if warningHandler != nil {
+		config.WarningHandler = warningHandler
 	}
 
 	// Resolve the active context name

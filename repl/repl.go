@@ -86,10 +86,11 @@ type REPL struct {
 	contextName      string
 	driftScan        DriftScanFunc
 	driftCache       *tools.DriftCache
+	warnings         *tools.WarningRelay
 }
 
 // New creates a new REPL instance.
-func New(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, mutationGuard *tools.MutationGuard, listContexts ContextListFunc, switchContext ContextSwitchFunc, resourceFetcher ResourceFetcher, directIO *tools.DirectIO, contextName string, driftScan DriftScanFunc, driftCache *tools.DriftCache) *REPL {
+func New(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Manager, apiKey, baseURL, modelName string, maxToolCalls int, toolCallResetter ToolCallResetter, mutationGuard *tools.MutationGuard, listContexts ContextListFunc, switchContext ContextSwitchFunc, resourceFetcher ResourceFetcher, directIO *tools.DirectIO, contextName string, driftScan DriftScanFunc, driftCache *tools.DriftCache, warnings *tools.WarningRelay) *REPL {
 	return &REPL{
 		runner:           r,
 		sessionService:   ss,
@@ -108,12 +109,13 @@ func New(r *runner.Runner, ss session.Service, debug bool, manifest *manifest.Ma
 		contextName:      contextName,
 		driftScan:        driftScan,
 		driftCache:       driftCache,
+		warnings:         warnings,
 	}
 }
 
 // Run starts the interactive REPL loop using bubbletea.
 func (r *REPL) Run(ctx context.Context) error {
-	m := newModel(r.runner, r.sessionService, r.debug, r.manifest, r.apiKey, r.baseURL, r.modelName, r.maxToolCalls, r.toolCallResetter, r.mutationGuard, r.listContexts, r.switchContext, r.resourceFetcher, r.directIO, r.contextName, r.driftScan, r.driftCache)
+	m := newModel(r.runner, r.sessionService, r.debug, r.manifest, r.apiKey, r.baseURL, r.modelName, r.maxToolCalls, r.toolCallResetter, r.mutationGuard, r.listContexts, r.switchContext, r.resourceFetcher, r.directIO, r.contextName, r.driftScan, r.driftCache, r.warnings)
 	p := tea.NewProgram(m, tea.WithContext(ctx))
 	_, err := p.Run()
 	return err
