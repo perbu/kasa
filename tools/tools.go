@@ -96,6 +96,7 @@ func (k *KubeTools) DriftCache() *DriftCache {
 // Each tool is wrapped with an invocation counter that injects a warning into
 // the response when a single tool is called too many times in one turn.
 func (k *KubeTools) All() []tool.Tool {
+	proposePlan := NewProposePlanTool()
 	raw := []tool.Tool{
 		NewListNamespacesTool(k.clientset),
 		NewDeleteNamespaceTool(k.clientset, k.manifest),
@@ -117,7 +118,7 @@ func (k *KubeTools) All() []tool.Tool {
 		NewImportResourceTool(k.dynamicClient, k.manifest),
 		NewApplyManifestTool(k.dynamicClient, k.manifest),
 		NewDryRunApplyTool(k.dynamicClient, k.manifest),
-		NewProposePlanTool(),
+		proposePlan,
 		NewAskClarificationTool(),
 		// Generic resource tools using dynamic client
 		NewApplyResourceTool(k.dynamicClient, k.manifest),
@@ -151,6 +152,26 @@ func (k *KubeTools) All() []tool.Tool {
 			NewReadWorkspaceFileTool(k.workspace),
 		)
 	}
+
+	// Give propose_plan the declared schema of every tool so it can validate
+	// planned action parameters at proposal time.
+	schemas := make(map[string]toolSchema, len(raw))
+	for _, t := range raw {
+		ft, ok := t.(functionTool)
+		if !ok {
+			continue
+		}
+		decl := ft.Declaration()
+		s := toolSchema{params: map[string]bool{}}
+		if decl != nil && decl.Parameters != nil {
+			for name := range decl.Parameters.Properties {
+				s.params[name] = true
+			}
+			s.required = decl.Parameters.Required
+		}
+		schemas[ft.Name()] = s
+	}
+	proposePlan.SetToolSchemas(schemas)
 
 	wrapped := make([]tool.Tool, len(raw))
 	for i, t := range raw {

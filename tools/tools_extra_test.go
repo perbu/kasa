@@ -240,6 +240,122 @@ func TestProposePlanTool(t *testing.T) {
 	})
 }
 
+// TestProposePlanSchemaValidation tests that planned action parameters are
+// validated against the target tool's declared schema at proposal time.
+func TestProposePlanSchemaValidation(t *testing.T) {
+	tool := NewProposePlanTool()
+	tool.SetToolSchemas(map[string]toolSchema{
+		"apply_resource": {
+			params:   map[string]bool{"yaml": true, "namespace": true, "app": true, "dry_run": true},
+			required: []string{"yaml"},
+		},
+	})
+
+	validYAML := "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: nginx"
+
+	t.Run("valid parameters pass", func(t *testing.T) {
+		result, err := tool.Run(nil, map[string]any{
+			"description": "Deploy nginx",
+			"actions": []any{
+				map[string]any{
+					"tool":       "apply_resource",
+					"parameters": map[string]any{"yaml": validYAML, "namespace": "default"},
+					"reason":     "Create the deployment",
+				},
+			},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result["status"] != "awaiting_approval" {
+			t.Errorf("expected status 'awaiting_approval', got %v", result)
+		}
+	})
+
+	t.Run("undeclared parameter rejected", func(t *testing.T) {
+		result, err := tool.Run(nil, map[string]any{
+			"description": "Bump image tag",
+			"actions": []any{
+				map[string]any{
+					"tool":       "apply_resource",
+					"parameters": map[string]any{"type": "deployment", "app": "internal-agents", "namespace": "internal-agents"},
+					"reason":     "Apply updated deployment",
+				},
+			},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		errStr, _ := result["error"].(string)
+		if !strings.Contains(errStr, `does not accept parameter(s): type`) {
+			t.Errorf("expected undeclared-parameter error, got %v", result["error"])
+		}
+		if !strings.Contains(errStr, "app, dry_run, namespace, yaml") {
+			t.Errorf("expected valid parameter list in error, got %v", result["error"])
+		}
+	})
+
+	t.Run("missing required parameter rejected", func(t *testing.T) {
+		result, err := tool.Run(nil, map[string]any{
+			"description": "Bump image tag",
+			"actions": []any{
+				map[string]any{
+					"tool":       "apply_resource",
+					"parameters": map[string]any{"app": "internal-agents", "namespace": "internal-agents"},
+					"reason":     "Apply updated deployment",
+				},
+			},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		errStr, _ := result["error"].(string)
+		if !strings.Contains(errStr, "missing required parameter(s): yaml") {
+			t.Errorf("expected missing-required error, got %v", result["error"])
+		}
+	})
+
+	t.Run("unknown tool rejected", func(t *testing.T) {
+		result, err := tool.Run(nil, map[string]any{
+			"description": "test",
+			"actions": []any{
+				map[string]any{
+					"tool":       "no_such_tool",
+					"parameters": map[string]any{},
+					"reason":     "test",
+				},
+			},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		errStr, _ := result["error"].(string)
+		if !strings.Contains(errStr, `unknown tool "no_such_tool"`) {
+			t.Errorf("expected unknown-tool error, got %v", result["error"])
+		}
+	})
+
+	t.Run("no schemas set skips validation", func(t *testing.T) {
+		unwired := NewProposePlanTool()
+		result, err := unwired.Run(nil, map[string]any{
+			"description": "test",
+			"actions": []any{
+				map[string]any{
+					"tool":       "apply_resource",
+					"parameters": map[string]any{"type": "deployment"},
+					"reason":     "test",
+				},
+			},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result["status"] != "awaiting_approval" {
+			t.Errorf("expected validation to be skipped, got %v", result)
+		}
+	})
+}
+
 // TestAskClarificationTool tests the ask_clarification tool.
 func TestAskClarificationTool(t *testing.T) {
 	tool := NewAskClarificationTool()

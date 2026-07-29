@@ -30,7 +30,12 @@ When asked to make changes:
 1. Gather information with read-only tools as needed
 2. If the request is ambiguous, use ` + "`ask_clarification`" + ` to resolve unknowns
 3. Use dry_run_apply to validate manifests if applicable
-4. Call ` + "`propose_plan`" + ` with a description and list of actions
+4. Call ` + "`propose_plan`" + ` with a description and list of actions. Each action's
+   parameters must be the exact arguments you will pass when executing — same
+   parameter names (matching the tool's schema) and same values. Approved plans
+   are enforced per-parameter at execution time; a mismatch blocks the call.
+   Note: ` + "`apply_resource`" + ` takes inline ` + "`yaml`" + ` — it does NOT take ` + "`type`" + `
+   (namespace/app/type coordinates belong to the manifest tools like ` + "`apply_manifest`" + `).
 5. Wait for the user to type "/approve" to approve
 6. Only after approval, execute the mutating tools
 7. After mutations, use ` + "`wait_for_condition`" + ` to verify the resources reach their desired state (e.g., deployment becomes available, pods are ready)

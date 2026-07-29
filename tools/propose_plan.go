@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"google.golang.org/adk/model"
@@ -9,12 +10,30 @@ import (
 	"google.golang.org/genai"
 )
 
+// toolSchema describes the parameters a tool declares, used to validate
+// planned actions before the plan is shown to the user.
+type toolSchema struct {
+	params   map[string]bool
+	required []string
+}
+
 // ProposePlanTool captures planned mutating actions for user approval.
-type ProposePlanTool struct{}
+type ProposePlanTool struct {
+	// schemas maps tool name → declared parameters. Populated via
+	// SetToolSchemas after the full tool registry is built. When nil,
+	// parameter validation is skipped.
+	schemas map[string]toolSchema
+}
 
 // NewProposePlanTool creates a new ProposePlanTool.
 func NewProposePlanTool() *ProposePlanTool {
 	return &ProposePlanTool{}
+}
+
+// SetToolSchemas registers the declared parameters of all available tools so
+// that planned actions can be validated against the real tool schemas.
+func (t *ProposePlanTool) SetToolSchemas(schemas map[string]toolSchema) {
+	t.schemas = schemas
 }
 
 // Name returns the tool name.
@@ -24,7 +43,7 @@ func (t *ProposePlanTool) Name() string {
 
 // Description returns the tool description.
 func (t *ProposePlanTool) Description() string {
-	return "Propose a plan of mutating actions for user approval. Must be called before executing any mutating operations. The plan will be displayed to the user who must approve it before execution can proceed."
+	return "Propose a plan of mutating actions for user approval. Must be called before executing any mutating operations. The plan will be displayed to the user who must approve it before execution can proceed. Each action's parameters must use exactly the parameter names the target tool declares, with the same values you will pass when executing — approved plans are enforced parameter-by-parameter at execution time."
 }
 
 // IsLongRunning returns false as this is a quick operation.
@@ -119,6 +138,13 @@ func (t *ProposePlanTool) Run(ctx tool.Context, args any) (map[string]any, error
 				"index": i,
 			}, nil
 		}
+
+		if err := t.validateActionParams(i, actionMap); err != nil {
+			return map[string]any{
+				"error": err.Error(),
+				"index": i,
+			}, nil
+		}
 	}
 
 	// Return the plan details for the REPL to capture and display
@@ -128,4 +154,51 @@ func (t *ProposePlanTool) Run(ctx tool.Context, args any) (map[string]any, error
 		"description": description,
 		"actions":     actions,
 	}, nil
+}
+
+// validateActionParams checks a planned action's parameters against the target
+// tool's declared schema, so schema mistakes are caught at proposal time
+// instead of failing the mutation guard after the user has approved the plan.
+func (t *ProposePlanTool) validateActionParams(index int, action map[string]any) error {
+	if t.schemas == nil {
+		return nil
+	}
+
+	toolName, _ := action["tool"].(string)
+	schema, known := t.schemas[toolName]
+	if !known {
+		return fmt.Errorf("action at index %d: unknown tool %q. Use one of the available tools.", index, toolName)
+	}
+
+	params, _ := action["parameters"].(map[string]any)
+
+	var invalid []string
+	for k := range params {
+		if !schema.params[k] {
+			invalid = append(invalid, k)
+		}
+	}
+	if len(invalid) > 0 {
+		sort.Strings(invalid)
+		valid := make([]string, 0, len(schema.params))
+		for k := range schema.params {
+			valid = append(valid, k)
+		}
+		sort.Strings(valid)
+		return fmt.Errorf("action at index %d: tool %q does not accept parameter(s): %s. Valid parameters are: %s. Re-propose the plan using only parameters this tool declares.",
+			index, toolName, strings.Join(invalid, ", "), strings.Join(valid, ", "))
+	}
+
+	var missingRequired []string
+	for _, r := range schema.required {
+		if _, ok := params[r]; !ok {
+			missingRequired = append(missingRequired, r)
+		}
+	}
+	if len(missingRequired) > 0 {
+		return fmt.Errorf("action at index %d: tool %q is missing required parameter(s): %s. Include them in the action's parameters so the plan shows exactly what will be executed.",
+			index, toolName, strings.Join(missingRequired, ", "))
+	}
+
+	return nil
 }
