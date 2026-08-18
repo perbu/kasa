@@ -35,7 +35,7 @@ func (t *ApplyResourceTool) Name() string {
 
 // Description returns the tool description.
 func (t *ApplyResourceTool) Description() string {
-	return "Apply any Kubernetes resource from YAML. Supports core resources (Deployment, Service, ConfigMap, etc.) and CRDs (HTTPRoute, Gateway, Certificate, etc.). Creates or updates the resource."
+	return "Apply any Kubernetes resource from inline YAML and save it to manifest storage. Supports core resources (Deployment, Service, ConfigMap, etc.) and CRDs (HTTPRoute, Gateway, Certificate, etc.). Use this when you need to modify a manifest before applying; use apply_manifest to re-apply a stored manifest unchanged."
 }
 
 // IsLongRunning returns false as this is a quick operation.

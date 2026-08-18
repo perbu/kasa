@@ -1841,3 +1841,109 @@ func searchSubstring(s, substr string) bool {
 	}
 	return false
 }
+
+// TestApplyManifestToolUnchanged tests that apply_manifest reports
+// "unchanged" instead of a misleading "updated" when the stored manifest
+// already matches the live cluster state.
+func TestApplyManifestToolUnchanged(t *testing.T) {
+	nsName := "test-apply-unchanged"
+	createTestNamespace(t, clientset, nsName)
+	mgr := newTestManifestManager(t)
+	tool := NewApplyManifestTool(dynamicClient, mgr)
+
+	deploymentYAML := `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: am-deploy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: am-deploy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: am-deploy
+    spec:
+      containers:
+      - name: am-deploy
+        image: nginx:1.25
+`
+
+	t.Run("creates resource from stored manifest", func(t *testing.T) {
+		writeTestManifest(t, mgr, nsName, "am-deploy", "deployment", deploymentYAML)
+
+		result, err := tool.Run(nil, map[string]any{
+			"namespace": nsName,
+			"app":       "am-deploy",
+			"type":      "deployment",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result["success"] != true {
+			t.Fatalf("expected success, got: %v", result)
+		}
+		if result["action"] != "created" {
+			t.Errorf("expected action 'created', got %v", result["action"])
+		}
+	})
+
+	t.Run("reports unchanged when stored manifest matches cluster", func(t *testing.T) {
+		result, err := tool.Run(nil, map[string]any{
+			"namespace": nsName,
+			"app":       "am-deploy",
+			"type":      "deployment",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result["success"] != true {
+			t.Fatalf("expected success, got: %v", result)
+		}
+		if result["action"] != "unchanged" {
+			t.Errorf("expected action 'unchanged', got %v", result["action"])
+		}
+		msg, _ := result["message"].(string)
+		if !containsSubstring(msg, "No changes") {
+			t.Errorf("expected 'No changes' message, got %q", msg)
+		}
+	})
+
+	t.Run("reports updated when stored manifest differs", func(t *testing.T) {
+		updatedYAML := `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: am-deploy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: am-deploy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: am-deploy
+    spec:
+      containers:
+      - name: am-deploy
+        image: nginx:1.26
+`
+		writeTestManifest(t, mgr, nsName, "am-deploy", "deployment", updatedYAML)
+
+		result, err := tool.Run(nil, map[string]any{
+			"namespace": nsName,
+			"app":       "am-deploy",
+			"type":      "deployment",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result["success"] != true {
+			t.Fatalf("expected success, got: %v", result)
+		}
+		if result["action"] != "updated" {
+			t.Errorf("expected action 'updated', got %v", result["action"])
+		}
+	})
+}

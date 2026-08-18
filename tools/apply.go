@@ -34,7 +34,7 @@ func (t *ApplyManifestTool) Name() string {
 
 // Description returns the tool description.
 func (t *ApplyManifestTool) Description() string {
-	return "Apply a stored manifest to the Kubernetes cluster. Reads the manifest from storage and creates or updates the resource in the cluster."
+	return "Apply a stored manifest to the Kubernetes cluster. Reads the manifest from storage and creates or updates the resource in the cluster. To change a field, first update the stored manifest, or use apply_resource with inline YAML instead."
 }
 
 // IsLongRunning returns false as this is a quick operation.
@@ -172,19 +172,28 @@ func (t *ApplyManifestTool) Run(ctx tool.Context, args any) (map[string]any, err
 		}
 		action = "created"
 	} else {
-		// Resource exists, update it
-		obj.SetResourceVersion(existing.GetResourceVersion())
-		if strings.EqualFold(gvk.Kind, "Service") {
-			preserveServiceFields(existing, obj)
+		// Resource exists. Detect no-op applies: if the stored manifest already
+		// matches the live resource, skip the update and report "unchanged"
+		// instead of a misleading "updated".
+		drift := CompareManifest(ctx, t.dynamicClient, namespace, app, resourceType, content)
+		_, hasManagedByLabel := existing.GetLabels()[managedByLabel]
+		if drift.Status == "in_sync" && hasManagedByLabel {
+			action = "unchanged"
+		} else {
+			// Resource differs (or drift status is unknown), update it.
+			obj.SetResourceVersion(existing.GetResourceVersion())
+			if strings.EqualFold(gvk.Kind, "Service") {
+				preserveServiceFields(existing, obj)
+			}
+			_, updateErr := resourceClient.Update(timeoutCtx, obj, updateOptions)
+			if updateErr != nil {
+				return map[string]any{
+					"success": false,
+					"error":   fmt.Sprintf("failed to update %s: %v", gvk.Kind, updateErr),
+				}, nil
+			}
+			action = "updated"
 		}
-		_, updateErr := resourceClient.Update(timeoutCtx, obj, updateOptions)
-		if updateErr != nil {
-			return map[string]any{
-				"success": false,
-				"error":   fmt.Sprintf("failed to update %s: %v", gvk.Kind, updateErr),
-			}, nil
-		}
-		action = "updated"
 	}
 
 	result := map[string]any{
@@ -197,7 +206,13 @@ func (t *ApplyManifestTool) Run(ctx tool.Context, args any) (map[string]any, err
 
 	if dryRun {
 		result["dry_run"] = true
-		result["message"] = fmt.Sprintf("Dry run: %s/%s/%s would be %s", namespace, app, resourceType, action)
+		if action == "unchanged" {
+			result["message"] = fmt.Sprintf("Dry run: no changes — %s/%s/%s already matches cluster state", namespace, app, resourceType)
+		} else {
+			result["message"] = fmt.Sprintf("Dry run: %s/%s/%s would be %s", namespace, app, resourceType, action)
+		}
+	} else if action == "unchanged" {
+		result["message"] = fmt.Sprintf("No changes — stored manifest for %s/%s/%s already matches cluster state", namespace, app, resourceType)
 	} else {
 		result["message"] = fmt.Sprintf("Successfully %s %s/%s in namespace %s", action, resourceType, app, namespace)
 	}
