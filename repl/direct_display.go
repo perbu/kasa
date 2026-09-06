@@ -26,8 +26,8 @@ var directDisplayBodyStyle = lipgloss.NewStyle().Faint(true)
 // the response as styled plain text. Returns the rendered string and true if
 // the tool has a formatter and the response was successfully formatted.
 //
-// Uses lipgloss instead of glamour to avoid ANSI background sequences that
-// cause bubbletea to miscalculate view region height.
+// Uses plain-text styling so log content is not interpreted as Markdown.
+// The interactive output queue wraps and sanitizes the resulting terminal rows.
 func FormatDirectDisplay(name string, response map[string]any, width int) (string, bool) {
 	formatter, exists := directDisplayFormatters[name]
 	if !exists {
@@ -76,4 +76,3 @@ func formatGetLogs(response map[string]any) (string, string, bool) {
 
 	return title, strings.TrimRight(logs, "\n"), true
 }
-

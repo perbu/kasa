@@ -1,10 +1,11 @@
 package main
 
 import (
-	"log"
 	"math"
 	"net/http"
 	"time"
+
+	"k8s.io/klog/v2"
 )
 
 // retryTransport wraps an http.RoundTripper with exponential backoff retry
@@ -36,7 +37,9 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		if attempt > 0 {
 			backoff := time.Duration(math.Pow(2, float64(attempt-1))) * time.Second
 			if t.debug {
-				log.Printf("[retry] attempt %d/%d after %v", attempt+1, t.maxRetries+1, backoff)
+				// klog is redirected to a file at startup; stderr belongs to
+				// the interactive renderer while the REPL is running.
+				klog.Infof("[retry] attempt %d/%d after %v", attempt+1, t.maxRetries+1, backoff)
 			}
 
 			timer := time.NewTimer(backoff)

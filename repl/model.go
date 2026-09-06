@@ -12,8 +12,8 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"charm.land/glamour/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/perbu/kasa/manifest"
 	"github.com/perbu/kasa/tools"
@@ -94,9 +94,9 @@ type model struct {
 	agentBusy        bool
 	agentCancel      context.CancelFunc
 	eventCh          chan agentEventMsg
-	toolCallCount    int              // number of tool calls in current agent turn
-	maxToolCalls     int              // configurable limit per turn
-	toolCallResetter ToolCallResetter // reset per-tool counters between turns
+	toolCallCount    int                  // number of tool calls in current agent turn
+	maxToolCalls     int                  // configurable limit per turn
+	toolCallResetter ToolCallResetter     // reset per-tool counters between turns
 	mutationGuard    *tools.MutationGuard // blocks mutating tools unless plan is approved
 
 	// status display
@@ -149,6 +149,9 @@ type model struct {
 	// pendingPrint holds lines from bgPrintMsg that arrived during a turn;
 	// flushed on the next idle transition by flushPendingPrint().
 	pendingPrint []string
+
+	output       []string // ordered scrollback rows, drained by Update
+	outputActive bool
 
 	quitting bool
 }
@@ -219,33 +222,33 @@ func newModel(r *runner.Runner, ss session.Service, debug bool, manifest *manife
 	si.EchoCharacter = '*'
 
 	return model{
-		textarea:       ta,
-		wave:           w,
-		history:        NewHistory(),
-		state:          NewSessionState(),
-		runner:         r,
-		sessionService: ss,
-		sessionID:      "session1",
-		sessionCounter: 1,
-		debug:          debug,
-		mdRenderer:     md,
-		manifest:       manifest,
-		apiKey:         apiKey,
-		baseURL:        baseURL,
+		textarea:         ta,
+		wave:             w,
+		history:          NewHistory(),
+		state:            NewSessionState(),
+		runner:           r,
+		sessionService:   ss,
+		sessionID:        "session1",
+		sessionCounter:   1,
+		debug:            debug,
+		mdRenderer:       md,
+		manifest:         manifest,
+		apiKey:           apiKey,
+		baseURL:          baseURL,
 		modelName:        modelName,
 		maxToolCalls:     maxToolCalls,
 		toolCallResetter: toolCallResetter,
 		mutationGuard:    mutationGuard,
 		eventCh:          make(chan agentEventMsg, 64),
-		listContexts:    listContexts,
-		switchContext:   switchContext,
-		resourceFetcher: resourceFetcher,
-		contextName:     contextName,
-		driftScan:       driftScan,
-		driftCache:      driftCache,
-		warnings:        warnings,
-		directIO:        directIO,
-		secretInput:     si,
+		listContexts:     listContexts,
+		switchContext:    switchContext,
+		resourceFetcher:  resourceFetcher,
+		contextName:      contextName,
+		driftScan:        driftScan,
+		driftCache:       driftCache,
+		warnings:         warnings,
+		directIO:         directIO,
+		secretInput:      si,
 	}
 }
 
@@ -269,7 +272,7 @@ func waitForWarning(ch <-chan string) tea.Cmd {
 	}
 }
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
@@ -338,6 +341,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.quitting = true
+			m.output = nil
 			m.history.Save()
 			return m, tea.Quit
 		}
@@ -427,26 +431,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.agentBusy = false
 		var cmds []tea.Cmd
 		cmds = append(cmds, m.textarea.Focus())
-		for _, line := range msg.lines {
-			cmds = append(cmds, tea.Println(line))
-		}
-		if flush := m.flushPendingPrint(); flush != nil {
-			cmds = append(cmds, flush)
-		}
+		m.printLines(msg.lines)
+		m.flushPendingPrint()
 		return m, tea.Batch(cmds...)
 
 	case planRenderedMsg:
-		return m, tea.Println(msg.text)
+		m.print(msg.text)
+		return m, nil
 
 	case secretInputRequestMsg:
 		return m.handleSecretInputRequest(msg)
 
 	case directOutputMsg:
-		var cmds []tea.Cmd
-		for _, line := range msg.lines {
-			cmds = append(cmds, tea.Println(line))
-		}
-		return m, tea.Batch(cmds...)
+		m.printLines(msg.lines)
+		return m, nil
 
 	case bgPrintMsg:
 		if len(msg.lines) == 0 {
@@ -459,7 +457,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingPrint = append(m.pendingPrint, msg.lines...)
 			return m, nil
 		}
-		return m, printLines(msg.lines)
+		m.printLines(msg.lines)
+		return m, nil
 
 	case apiWarningMsg:
 		// Re-arm the listener, then display (or defer) like bgPrintMsg.
@@ -473,7 +472,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingPrint = append(m.pendingPrint, line)
 			return m, tea.Batch(cmds...)
 		}
-		cmds = append(cmds, tea.Println(line))
+		m.print(line)
 		return m, tea.Batch(cmds...)
 	}
 
@@ -490,31 +489,17 @@ func (m model) isBusyOrModal() bool {
 		m.showContextSelect
 }
 
-// flushPendingPrint returns a Cmd that prints any deferred bgPrintMsg lines
-// and clears the queue. Self-guards on isBusyOrModal: if a plan/modal/etc.
-// is still up after agentBusy clears, the queue is left intact for the next
-// idle transition. The receiver is a pointer because we mutate the slice;
-// Go addresses the value-receiver model's local m for the call.
-func (m *model) flushPendingPrint() tea.Cmd {
+// flushPendingPrint queues deferred background output at the next idle transition.
+func (m *model) flushPendingPrint() {
 	if len(m.pendingPrint) == 0 || m.isBusyOrModal() {
-		return nil
+		return
 	}
-	cmd := printLines(m.pendingPrint)
+	m.printLines(m.pendingPrint)
 	m.pendingPrint = nil
-	return cmd
-}
-
-// printLines returns a Cmd that prints each line via tea.Println.
-func printLines(lines []string) tea.Cmd {
-	cmds := make([]tea.Cmd, 0, len(lines))
-	for _, line := range lines {
-		cmds = append(cmds, tea.Println(line))
-	}
-	return tea.Batch(cmds...)
 }
 
 func (m model) View() tea.View {
-	if m.quitting {
+	if m.quitting && !m.outputActive && len(m.output) == 0 {
 		return tea.NewView("")
 	}
 
@@ -606,18 +591,17 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 
 	// Separator line between conversation turns
 	sep := separatorStyle.Render(strings.Repeat("─", m.separatorWidth()))
-	cmds = append(cmds, tea.Println(sep))
+	m.print(sep)
 
 	// Echo the user input above
-	cmds = append(cmds, tea.Println("> "+input))
+	m.print("> " + input)
 
 	// Handle commands
 	switch strings.ToLower(input) {
 	case "/exit", "/quit":
 		m.history.Save()
-		cmds = append(cmds, tea.Println("Goodbye!"))
+		m.print("Goodbye!")
 		m.quitting = true
-		cmds = append(cmds, tea.Quit)
 		return m, tea.Batch(cmds...)
 	case "/approve":
 		if m.state.HasPendingPlan() {
@@ -632,13 +616,13 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 				}
 				m.mutationGuard.AllowPlan(actions)
 			}
-			cmds = append(cmds, tea.Println("Plan approved. Executing..."))
+			m.print("Plan approved. Executing...")
 			execPrompt := FormatExecutionPrompt(plan)
 			cmd := m.startAgent(execPrompt)
 			cmds = append(cmds, cmd)
 			return m, tea.Batch(cmds...)
 		}
-		cmds = append(cmds, tea.Println("No pending plan to approve."))
+		m.print("No pending plan to approve.")
 		return m, tea.Batch(cmds...)
 
 	case "/abort", "/reject":
@@ -647,13 +631,11 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 			if m.mutationGuard != nil {
 				m.mutationGuard.Block()
 			}
-			cmds = append(cmds, tea.Println("Plan rejected."))
-				} else {
-			cmds = append(cmds, tea.Println("No pending plan to reject."))
+			m.print("Plan rejected.")
+		} else {
+			m.print("No pending plan to reject.")
 		}
-		if flush := m.flushPendingPrint(); flush != nil {
-			cmds = append(cmds, flush)
-		}
+		m.flushPendingPrint()
 		return m, tea.Batch(cmds...)
 
 	case "/plan":
@@ -666,22 +648,22 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 				return planRenderedMsg{text: RenderPlan(plan, diffs)}
 			})
 		} else {
-			cmds = append(cmds, tea.Println("No pending plan."))
+			m.print("No pending plan.")
 		}
 		return m, tea.Batch(cmds...)
 
 	case "/copy":
 		if !m.state.HasPendingPlan() {
-			cmds = append(cmds, tea.Println("No pending plan to copy."))
+			m.print("No pending plan to copy.")
 			return m, tea.Batch(cmds...)
 		}
 		yaml := collectPlanYAML(m.state.PendingPlan)
 		if yaml == "" {
-			cmds = append(cmds, tea.Println("No YAML content in the pending plan."))
+			m.print("No YAML content in the pending plan.")
 			return m, tea.Batch(cmds...)
 		}
 		cmds = append(cmds, tea.SetClipboard(yaml))
-		cmds = append(cmds, tea.Println("Plan YAML copied to clipboard."))
+		m.print("Plan YAML copied to clipboard.")
 		return m, tea.Batch(cmds...)
 
 	case "/commit":
@@ -703,18 +685,18 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 		ctx := context.Background()
 		path, eventCount, err := dumpSession(ctx, m.sessionService, m.sessionID, m.state)
 		if err != nil {
-			cmds = append(cmds, tea.Println(fmt.Sprintf("Dump failed: %v", err)))
+			m.print(fmt.Sprintf("Dump failed: %v", err))
 		} else {
-			cmds = append(cmds, tea.Println(fmt.Sprintf("Session dumped to %s (%d events)", path, eventCount)))
+			m.print(fmt.Sprintf("Session dumped to %s (%d events)", path, eventCount))
 		}
 		return m, tea.Batch(cmds...)
 
 	case "/debug":
 		m.debug = !m.debug
 		if m.debug {
-			cmds = append(cmds, tea.Println("Debug mode enabled."))
+			m.print("Debug mode enabled.")
 		} else {
-			cmds = append(cmds, tea.Println("Debug mode disabled."))
+			m.print("Debug mode disabled.")
 		}
 		return m, tea.Batch(cmds...)
 
@@ -735,29 +717,29 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 			SessionID: m.sessionID,
 		})
 		if err != nil {
-			cmds = append(cmds, tea.Println(fmt.Sprintf("Failed to clear context: %v", err)))
+			m.print(fmt.Sprintf("Failed to clear context: %v", err))
 			return m, tea.Batch(cmds...)
 		}
 		m.state = NewSessionState()
-		cmds = append(cmds, tea.Println("Context cleared."))
+		m.print("Context cleared.")
 		return m, tea.Batch(cmds...)
 
 	case "/help":
-		cmds = append(cmds, tea.Println(commandHelp()))
+		m.print(commandHelp())
 		return m, tea.Batch(cmds...)
 
 	case "/context":
 		if m.listContexts == nil || m.switchContext == nil {
-			cmds = append(cmds, tea.Println("Context switching not available."))
+			m.print("Context switching not available.")
 			return m, tea.Batch(cmds...)
 		}
 		ctxs, err := m.listContexts()
 		if err != nil {
-			cmds = append(cmds, tea.Println(fmt.Sprintf("Failed to list contexts: %v", err)))
+			m.print(fmt.Sprintf("Failed to list contexts: %v", err))
 			return m, tea.Batch(cmds...)
 		}
 		if len(ctxs) == 0 {
-			cmds = append(cmds, tea.Println("No contexts found."))
+			m.print("No contexts found.")
 			return m, tea.Batch(cmds...)
 		}
 		m.showContextSelect = true
@@ -766,14 +748,14 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 
 	default:
 		if strings.HasPrefix(strings.ToLower(input), "/") {
-			cmds = append(cmds, tea.Println(fmt.Sprintf("Unknown command: %s", input)))
+			m.print(fmt.Sprintf("Unknown command: %s", input))
 			return m, tea.Batch(cmds...)
 		}
 	}
 
 	// If there's a pending plan, warn
 	if m.state.HasPendingPlan() {
-		cmds = append(cmds, tea.Println("You have a pending plan. Type /approve to approve, /abort to reject, or /plan to review."))
+		m.print("You have a pending plan. Type /approve to approve, /abort to reject, or /plan to review.")
 		return m, tea.Batch(cmds...)
 	}
 
@@ -871,10 +853,8 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 			cmds = append(cmds, m.textarea.Focus())
-			cmds = append(cmds, tea.Println(fmt.Sprintf("Error: %v", msg.err)))
-			if flush := m.flushPendingPrint(); flush != nil {
-				cmds = append(cmds, flush)
-			}
+			m.print(fmt.Sprintf("Error: %v", msg.err))
+			m.flushPendingPrint()
 			return m, tea.Batch(cmds...)
 		}
 	}
@@ -888,7 +868,7 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 			m.showClarification = true
 			m.clarModal = newClarificationModal(m.state.PendingClarification, m.width)
 			// Don't focus textarea — modal handles input
-					return m, tea.Batch(cmds...)
+			return m, tea.Batch(cmds...)
 		}
 
 		cmds = append(cmds, m.textarea.Focus())
@@ -912,9 +892,7 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		if flush := m.flushPendingPrint(); flush != nil {
-			cmds = append(cmds, flush)
-		}
+		m.flushPendingPrint()
 		return m, tea.Batch(cmds...)
 	}
 
@@ -926,7 +904,7 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 	// Print debug lines when debug mode is enabled
 	if m.debug {
 		for _, line := range formatDebugLines(event) {
-			cmds = append(cmds, tea.Println(line))
+			m.print(line)
 		}
 	}
 
@@ -966,17 +944,17 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 			m.statusText = ""
 
 			if line := formatToolCallLine(tc, m.width, m.state.Mode == ModeExecuting); line != "" {
-				cmds = append(cmds, tea.Println(line))
+				m.print(line)
 			}
 		}
 
 		// Hard limit: cancel agent if it's making too many tool calls
 		if m.maxToolCalls > 0 && m.toolCallCount >= m.maxToolCalls && m.agentCancel != nil {
 			m.agentCancel()
-			cmds = append(cmds, tea.Println(
-				"\n⚠ Agent stopped: exceeded tool call limit ("+
-					fmt.Sprintf("%d", m.maxToolCalls)+
-					" calls). The model may be stuck in a loop."))
+			m.print(
+				"\n⚠ Agent stopped: exceeded tool call limit (" +
+					fmt.Sprintf("%d", m.maxToolCalls) +
+					" calls). The model may be stuck in a loop.")
 		}
 
 		if len(ev.ToolResponses) > 0 {
@@ -990,14 +968,14 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 			if m.directIO != nil {
 				for _, line := range m.directIO.Drain() {
 					rendered := renderDirectOutput(line, m.width)
-					cmds = append(cmds, tea.Println(rendered))
+					m.print(rendered)
 				}
 			}
 
 			// Direct display of read-only tool responses
 			for _, tr := range ev.ToolResponses {
 				if rendered, ok := FormatDirectDisplay(tr.Name, tr.Response, m.width); ok {
-					cmds = append(cmds, tea.Println(rendered))
+					m.print(rendered)
 				}
 			}
 		}
@@ -1017,7 +995,7 @@ func (m model) handleAgentEvent(msg agentEventMsg) (tea.Model, tea.Cmd) {
 		} else {
 			for _, text := range ev.TextParts {
 				rendered := m.renderMarkdown(text)
-				cmds = append(cmds, tea.Println(rendered))
+				m.print(rendered)
 			}
 		}
 	}
@@ -1036,7 +1014,7 @@ func (m model) handleClarificationAnswer(msg clarificationAnswerMsg) (tea.Model,
 
 	// Format answers and send to agent
 	answerText := formatClarificationAnswers(c, msg.answers)
-	cmds = append(cmds, tea.Println(answerText))
+	m.print(answerText)
 	cmd := m.startAgent(answerText)
 	cmds = append(cmds, cmd)
 	return m, tea.Batch(cmds...)
@@ -1048,11 +1026,9 @@ func (m model) handleClarificationCancel() (tea.Model, tea.Cmd) {
 	m.state.PendingClarification = nil
 	cmds := []tea.Cmd{
 		m.textarea.Focus(),
-		tea.Println("Clarification cancelled."),
 	}
-	if flush := m.flushPendingPrint(); flush != nil {
-		cmds = append(cmds, flush)
-	}
+	m.print("Clarification cancelled.")
+	m.flushPendingPrint()
 	return m, tea.Batch(cmds...)
 }
 
@@ -1111,7 +1087,7 @@ func (m model) handleSecretInputCancel() (tea.Model, tea.Cmd) {
 	}
 
 	var cmds []tea.Cmd
-	cmds = append(cmds, tea.Println("Secret input cancelled."))
+	m.print("Secret input cancelled.")
 	if m.directIO != nil {
 		cmds = append(cmds, waitForSecretInput(m.directIO.InputCh))
 	}
@@ -1139,9 +1115,9 @@ func (m model) handleContextSelected(msg contextSelectedMsg) (tea.Model, tea.Cmd
 // handleContextCancel dismisses the context selector without switching.
 func (m model) handleContextCancel() (tea.Model, tea.Cmd) {
 	m.showContextSelect = false
+	m.print("Context switch cancelled.")
 	cmds := []tea.Cmd{
 		m.textarea.Focus(),
-		tea.Println("Context switch cancelled."),
 	}
 	return m, tea.Batch(cmds...)
 }
@@ -1153,10 +1129,8 @@ func (m model) handleContextSwitch(msg contextSwitchMsg) (tea.Model, tea.Cmd) {
 
 	if msg.err != nil {
 		cmds = append(cmds, m.textarea.Focus())
-		cmds = append(cmds, tea.Println(fmt.Sprintf("Context switch failed: %v", msg.err)))
-		if flush := m.flushPendingPrint(); flush != nil {
-			cmds = append(cmds, flush)
-		}
+		m.print(fmt.Sprintf("Context switch failed: %v", msg.err))
+		m.flushPendingPrint()
 		return m, tea.Batch(cmds...)
 	}
 
@@ -1196,11 +1170,9 @@ func (m model) handleContextSwitch(msg contextSwitchMsg) (tea.Model, tea.Cmd) {
 	m.state = NewSessionState()
 
 	cmds = append(cmds, m.textarea.Focus())
-	cmds = append(cmds, tea.Println(fmt.Sprintf("Switched to context: %s", msg.result.ContextName)))
-	cmds = append(cmds, tea.Println("Tip: run /drift to check for manifest drift."))
-	if flush := m.flushPendingPrint(); flush != nil {
-		cmds = append(cmds, flush)
-	}
+	m.print(fmt.Sprintf("Switched to context: %s", msg.result.ContextName))
+	m.print("Tip: run /drift to check for manifest drift.")
+	m.flushPendingPrint()
 	return m, tea.Batch(cmds...)
 }
 
@@ -1223,12 +1195,12 @@ func prefixGitLines(out string) []string {
 // handleCommit implements the /commit command.
 func (m model) handleCommit(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 	if m.manifest == nil {
-		cmds = append(cmds, tea.Println("No manifest manager configured."))
+		m.print("No manifest manager configured.")
 		return m, tea.Batch(cmds...)
 	}
 
 	if m.manifest.StagedChangeCount() == 0 {
-		cmds = append(cmds, tea.Println("No uncommitted changes."))
+		m.print("No uncommitted changes.")
 		return m, tea.Batch(cmds...)
 	}
 
@@ -1284,12 +1256,12 @@ func (m *model) commitAsync() tea.Cmd {
 // handlePull implements the /pull command.
 func (m model) handlePull(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 	if m.manifest == nil {
-		cmds = append(cmds, tea.Println("No manifest manager configured."))
+		m.print("No manifest manager configured.")
 		return m, tea.Batch(cmds...)
 	}
 
 	if !m.manifest.HasRemote() {
-		cmds = append(cmds, tea.Println("No git remote configured."))
+		m.print("No git remote configured.")
 		return m, tea.Batch(cmds...)
 	}
 
@@ -1316,12 +1288,12 @@ func (m model) handlePull(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 // handlePush implements the /push command.
 func (m model) handlePush(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 	if m.manifest == nil {
-		cmds = append(cmds, tea.Println("No manifest manager configured."))
+		m.print("No manifest manager configured.")
 		return m, tea.Batch(cmds...)
 	}
 
 	if !m.manifest.HasRemote() {
-		cmds = append(cmds, tea.Println("No git remote configured."))
+		m.print("No git remote configured.")
 		return m, tea.Batch(cmds...)
 	}
 
@@ -1348,7 +1320,7 @@ func (m model) handlePush(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 // handleStatus implements the /status command.
 func (m model) handleStatus(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 	if m.manifest == nil {
-		cmds = append(cmds, tea.Println("No manifest manager configured."))
+		m.print("No manifest manager configured.")
 		return m, tea.Batch(cmds...)
 	}
 
@@ -1375,11 +1347,11 @@ func (m model) handleStatus(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 // handleDrift implements the /drift command.
 func (m model) handleDrift(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 	if m.driftScan == nil {
-		cmds = append(cmds, tea.Println("Drift scanning not available."))
+		m.print("Drift scanning not available.")
 		return m, tea.Batch(cmds...)
 	}
 	if m.manifest == nil {
-		cmds = append(cmds, tea.Println("No manifest manager configured."))
+		m.print("No manifest manager configured.")
 		return m, tea.Batch(cmds...)
 	}
 
