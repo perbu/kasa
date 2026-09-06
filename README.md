@@ -42,6 +42,12 @@ override config file values.
 ./kasa -debug -prompt "..."      # Debug output
 ```
 
+When the manifests repository has an `origin` remote (including one configured
+with `deployments.remote`), Kasa automatically pulls and rebases at startup,
+before reading manifests or checking drift. This runs in both interactive and
+single-prompt mode. Pull failures are reported without stopping Kasa; resolve
+the Git issue and use `/pull` to retry. Repositories without a remote are skipped.
+
 ## Safe Mode
 
 In interactive mode, mutating operations require approval. The agent proposes a

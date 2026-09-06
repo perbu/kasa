@@ -431,6 +431,16 @@ func (m *Manager) HasRemote() bool {
 	return cmd.Run() == nil
 }
 
+// Revision returns the current commit, or an error for a repository without
+// commits. Callers can compare revisions before and after a pull to detect
+// updates without parsing Git's human-readable output.
+func (m *Manager) Revision() (string, error) {
+	cmd := exec.Command("git", "rev-parse", "--verify", "HEAD")
+	cmd.Dir = m.baseDir
+	output, err := cmd.Output()
+	return strings.TrimSpace(string(output)), err
+}
+
 // Pull fetches from the remote and rebases local commits on top.
 // If no remote is configured, this is a no-op.
 // Returns git's combined stdout/stderr alongside any error.

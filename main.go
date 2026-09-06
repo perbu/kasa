@@ -101,12 +101,16 @@ func main() {
 		log.Fatalf("Failed to initialize git in manifest directory: %v", err)
 	}
 
-	// Set up git remote if configured (no auto-pull; use /pull to sync)
+	// Set up git remote if configured.
 	if cfg.Deployments.Remote != "" {
 		if err := manifestMgr.SetupRemote(cfg.Deployments.Remote); err != nil {
 			log.Fatalf("Failed to set up git remote: %v", err)
 		}
 	}
+
+	// Sync before tools read manifests or startup loads the drift cache.
+	// This also picks up an origin configured directly in the repository.
+	pullManifestsOnStartup(manifestMgr, cfgDir, os.Stdout)
 
 	// Get API key for web tools (optional)
 	jinaAPIKey := cfg.JinaAPIKey()
