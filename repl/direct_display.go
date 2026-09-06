@@ -41,8 +41,13 @@ func FormatDirectDisplay(name string, response map[string]any, width int) (strin
 
 	var sb strings.Builder
 	sb.WriteString(directDisplayTitleStyle.Render(title))
-	sb.WriteString("\n")
-	sb.WriteString(directDisplayBodyStyle.Render(body))
+	// A multiline Lip Gloss render pads every line to the longest line's
+	// width. In logs those spaces can wrap into several empty terminal rows.
+	// Style each line separately, preserving only the log's own whitespace.
+	for line := range strings.SplitSeq(body, "\n") {
+		sb.WriteByte('\n')
+		sb.WriteString(directDisplayBodyStyle.Render(line))
+	}
 	return sb.String(), true
 }
 

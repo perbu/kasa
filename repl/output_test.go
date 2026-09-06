@@ -125,6 +125,7 @@ func (m terminalFixture) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for i := 0; i < 150; i++ {
 			fmt.Fprintf(&logs, "row-%04d %s\n", i, strings.Repeat("x", 151))
 		}
+		logs.WriteString("short log entry\n  indented continuation\n\nlast log entry\n")
 		text, _ := FormatDirectDisplay("get_logs", map[string]any{
 			"namespace": "default", "pod": "test", "logs": logs.String(),
 		}, m.width)

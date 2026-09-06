@@ -1,6 +1,11 @@
 package repl
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/charmbracelet/x/ansi"
+)
 
 func TestFormatGetLogs(t *testing.T) {
 	t.Run("valid logs", func(t *testing.T) {
@@ -64,6 +69,26 @@ func TestFormatGetLogs(t *testing.T) {
 }
 
 func TestFormatDirectDisplay(t *testing.T) {
+	t.Run("unequal log lengths preserve whitespace", func(t *testing.T) {
+		logs := strings.Repeat("x", 600) + "\nshort log entry\n  indented continuation\n\nlast log entry"
+		rendered, ok := FormatDirectDisplay("get_logs", map[string]any{
+			"namespace": "default",
+			"pod":       "test",
+			"logs":      logs,
+		}, 160)
+		if !ok {
+			t.Fatal("expected formatted logs")
+		}
+		if got, want := ansi.Strip(rendered), "Logs: default/test\n"+logs; got != want {
+			t.Fatalf("formatting added whitespace:\ngot  %q\nwant %q", got, want)
+		}
+		rows := outputLines(rendered, 160)
+		// One title, four rows for the long entry, and four subsequent lines.
+		if len(rows) != 9 {
+			t.Errorf("got %d terminal rows, want 9", len(rows))
+		}
+	})
+
 	t.Run("unknown tool", func(t *testing.T) {
 		_, ok := FormatDirectDisplay("list_pods", map[string]any{}, 80)
 		if ok {

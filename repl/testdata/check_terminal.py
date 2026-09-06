@@ -37,6 +37,7 @@ def verify(rows):
         line = f"row-{i:04d} " + "x" * 151
         expected.extend(line[j:j + 79] for j in range(0, len(line), 79))
     expected.extend([
+        "short log entry", "  indented continuation", "", "last log entry",
         "git: commit", "Committed: test", "Push with /push when ready.",
         "─" * 64 + " SAFE | no plan", "> Type a message...",
     ])
