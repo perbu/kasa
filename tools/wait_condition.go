@@ -42,12 +42,14 @@ func (t *WaitForConditionTool) Description() string {
 	return `Wait for a Kubernetes resource to reach a desired condition. Polls the resource until the condition is met or timeout occurs.
 
 Supported conditions by resource type:
-- deployment: available, progressing, complete
+- deployment: available, complete (both mean the NEW revision is fully rolled out: the controller has observed the latest spec generation and all replicas are updated and available, same semantics as 'kubectl rollout status'), progressing
 - pod: ready, running, succeeded, deleted
 - job: complete, failed
-- statefulset: ready
+- statefulset: ready (all replicas updated to the latest revision and ready)
 - pvc: bound
-- any resource: deleted, exists`
+- any resource: deleted, exists
+
+Use 'available' or 'complete' after applying a change to a deployment to wait for the rollout to finish. Returns immediately if the rollout is already complete.`
 }
 
 // IsLongRunning returns true as this tool may poll for extended periods.
@@ -295,7 +297,16 @@ func (t *WaitForConditionTool) checkDeploymentCondition(ctx context.Context, nam
 	if dep.Spec.Replicas != nil {
 		replicas = *dep.Spec.Replicas
 	}
-	state := fmt.Sprintf("Ready: %d/%d replicas", dep.Status.ReadyReplicas, replicas)
+	generationObserved := dep.Status.ObservedGeneration >= dep.Generation
+	state := fmt.Sprintf("generation %d (observed: %d), updated %d/%d, available %d/%d, ready %d/%d",
+		dep.Generation, dep.Status.ObservedGeneration,
+		dep.Status.UpdatedReplicas, replicas,
+		dep.Status.AvailableReplicas, replicas,
+		dep.Status.ReadyReplicas, replicas)
+	if !generationObserved {
+		state = fmt.Sprintf("waiting for controller to observe generation %d (observed: %d); %s",
+			dep.Generation, dep.Status.ObservedGeneration, state)
+	}
 
 	// Check for ProgressDeadlineExceeded (deployment stuck)
 	for _, cond := range dep.Status.Conditions {
@@ -319,28 +330,30 @@ func (t *WaitForConditionTool) checkDeploymentCondition(ctx context.Context, nam
 	}
 
 	switch condition {
-	case "available":
-		for _, cond := range dep.Status.Conditions {
-			if cond.Type == appsv1.DeploymentAvailable && cond.Status == corev1.ConditionTrue {
-				return true, state, nil
-			}
+	case "available", "complete":
+		// Rollout complete, same semantics as `kubectl rollout status`.
+		// Note: the Deployment's "Available" condition alone is NOT sufficient:
+		// during a rolling update the old revision's pods keep it True, so we
+		// require the controller to have observed the latest spec generation
+		// and every replica to be from the new revision and available.
+		if !generationObserved {
+			return false, state, nil
+		}
+		if dep.Status.UpdatedReplicas == replicas &&
+			dep.Status.Replicas == dep.Status.UpdatedReplicas &&
+			dep.Status.AvailableReplicas == dep.Status.UpdatedReplicas {
+			return true, state, nil
 		}
 		return false, state, nil
 
 	case "progressing":
+		if !generationObserved {
+			return false, state, nil
+		}
 		for _, cond := range dep.Status.Conditions {
 			if cond.Type == appsv1.DeploymentProgressing && cond.Status == corev1.ConditionTrue {
 				return true, state, nil
 			}
-		}
-		return false, state, nil
-
-	case "complete":
-		// All replicas are ready and updated
-		if dep.Status.ReadyReplicas == replicas &&
-			dep.Status.UpdatedReplicas == replicas &&
-			dep.Status.Replicas == replicas {
-			return true, state, nil
 		}
 		return false, state, nil
 
@@ -445,11 +458,24 @@ func (t *WaitForConditionTool) checkStatefulSetCondition(ctx context.Context, na
 	if sts.Spec.Replicas != nil {
 		replicas = *sts.Spec.Replicas
 	}
-	state := fmt.Sprintf("Ready: %d/%d replicas", sts.Status.ReadyReplicas, replicas)
+	generationObserved := sts.Status.ObservedGeneration >= sts.Generation
+	revisionsMatch := sts.Status.CurrentRevision == sts.Status.UpdateRevision
+	state := fmt.Sprintf("generation %d (observed: %d), updated %d/%d, ready %d/%d, revision %s -> %s",
+		sts.Generation, sts.Status.ObservedGeneration,
+		sts.Status.UpdatedReplicas, replicas,
+		sts.Status.ReadyReplicas, replicas,
+		sts.Status.CurrentRevision, sts.Status.UpdateRevision)
 
 	switch condition {
 	case "ready":
-		if sts.Status.ReadyReplicas == replicas {
+		// All replicas rolled to the latest revision and ready, same
+		// semantics as `kubectl rollout status` for a StatefulSet.
+		if !generationObserved {
+			return false, "waiting for controller to observe latest generation; " + state, nil
+		}
+		if sts.Status.ReadyReplicas == replicas &&
+			sts.Status.UpdatedReplicas == replicas &&
+			revisionsMatch {
 			return true, state, nil
 		}
 		return false, state, nil
