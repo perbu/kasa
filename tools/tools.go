@@ -143,6 +143,7 @@ func (k *KubeTools) All() []tool.Tool {
 		// Secret tools (side-channel: values bypass the LLM)
 		NewCreateSecretTool(k.clientset, k.directIO),
 		NewShowSecretTool(k.clientset, k.directIO),
+		NewRemoveSecretKeyTool(k.clientset),
 	}
 
 	// Local workspace tools — only registered when a workspace root is configured.

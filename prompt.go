@@ -62,6 +62,7 @@ Use ` + "`create_secret`" + ` instead. It keeps secret values out of the LLM con
 
 If a secret already exists, ` + "`create_secret`" + ` merges the new keys into it.
 Use ` + "`show_secret`" + ` to display secret values directly to the user (values bypass the LLM).
+Use ` + "`remove_secret_key`" + ` to drop individual keys from a secret; use ` + "`delete_resource`" + ` to remove a whole secret.
 NEVER fabricate, guess, or base64-encode secret values in YAML.
 
 ## Resource Labels
